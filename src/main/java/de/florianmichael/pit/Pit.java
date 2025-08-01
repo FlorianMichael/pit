@@ -22,13 +22,11 @@ import javax.crypto.*;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
-import javax.swing.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.SecureRandom;
 import java.security.spec.KeySpec;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.zip.ZipEntry;
@@ -41,25 +39,16 @@ public final class Pit {
 
     public static void main(final String[] args) throws Exception {
         if (args.length == 0) {
-            SwingUtilities.invokeLater(() -> {
-                try {
-                    UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-                } catch (Exception ignored) {
-                }
-                new PitViewer().setVisible(true);
-            });
-            return;
-        }
-
-        if (args[0].equalsIgnoreCase("-h") || args[0].equalsIgnoreCase("--help")) {
             System.out.println("Private Information Tracker (pit)");
             System.out.println();
             System.out.println("Usage:");
-            System.out.println("  Encrypt: java -jar pit.jar -e [folder] [output file]");
-            System.out.println("  Decrypt: java -jar pit.jar -d [input file] [output folder]");
-            System.out.println("  View:    java -jar pit.jar -v [input file] (file in archive)");
-            System.out.println("  Help:    java -jar pit.jar -h");
-            System.out.println("  GUI:     java -jar pit.jar");
+            System.out.println("  Encrypt:   java -jar pit.jar --encrypt [folder] [output file]");
+            System.out.println("  Decrypt:   java -jar pit.jar --decrypt [input file] [output folder]");
+            System.out.println("  View:      java -jar pit.jar --view [input file] (file in archive)");
+            System.out.println("  Add:       java -jar pit.jar --add [encrypted file] [file to add]");
+            System.out.println("  Remove:    java -jar pit.jar --remove [encrypted file] [file to remove]");
+            System.out.println("  Edit:      java -jar pit.jar --edit [encrypted file] [file in archive] [new file]");
+            System.out.println("  Write:     java -jar pit.jar --write [encrypted file] [file name]");
             System.out.println();
             System.out.println("GitHub: https://github.com/FlorianMichael/pit");
             return;
@@ -72,12 +61,12 @@ public final class Pit {
         }
 
         final String password = new String(console.readPassword("Enter master password: "));
-
         switch (args[0].toLowerCase()) {
             case "-e":
             case "--encrypt":
-                String folder = args.length > 1 ? args[1] : "passwords";
-                String outputFile = args.length > 2 ? args[2] : "encrypted.zip";
+                final String folder = args.length > 1 ? args[1] : "passwords";
+                final String outputFile = args.length > 2 ? args[2] : "encrypted.zip";
+
                 try {
                     encryptFolder(folder, outputFile, password);
                 } catch (final Exception e) {
@@ -90,6 +79,7 @@ public final class Pit {
             case "--decrypt":
                 final String inputFile = args.length > 1 ? args[1] : "encrypted.zip";
                 final String outputFolder = args.length > 2 ? args[2] : "passwords";
+
                 try {
                     decryptToFolder(inputFile, outputFolder, password);
                 } catch (final Exception e) {
@@ -104,6 +94,7 @@ public final class Pit {
                     System.err.println("Usage: java -jar pit.jar -v (encrypted file) [file inside archive]");
                     return;
                 }
+
                 final String encryptedFile = args[1];
                 final String requestedFile = args.length > 2 ? args[2] : null;
                 try {
@@ -129,7 +120,86 @@ public final class Pit {
                     throw e;
                 }
                 break;
+            case "--add":
+                if (args.length < 3) {
+                    System.err.println("Usage: java -jar pit.jar --add [encrypted file] [file to add]");
+                    return;
+                }
 
+                try {
+                    final Map<String, byte[]> files = Pit.decryptToMemory(new File(args[1]), password);
+                    final File fileToAdd = new File(args[2]);
+                    files.put(fileToAdd.getName(), Files.readAllBytes(fileToAdd.toPath()));
+                    Pit.encryptFromMemory(files, new File(args[1]), password);
+                    System.out.println("File added: " + fileToAdd.getName());
+                } catch (final Exception e) {
+                    System.err.println("Failed to add file!");
+                    throw e;
+                }
+                break;
+            case "--remove":
+                if (args.length < 3) {
+                    System.err.println("Usage: java -jar pit.jar --remove [encrypted file] [file to remove]");
+                    return;
+                }
+
+                try {
+                    final Map<String, byte[]> files = Pit.decryptToMemory(new File(args[1]), password);
+                    if (files.remove(args[2]) != null) {
+                        Pit.encryptFromMemory(files, new File(args[1]), password);
+                        System.out.println("File removed: " + args[2]);
+                    } else {
+                        System.err.println("File not found: " + args[2]);
+                    }
+                } catch (final Exception e) {
+                    System.err.println("Failed to remove file!");
+                    throw e;
+                }
+                break;
+
+            case "--edit":
+                if (args.length < 4) {
+                    System.err.println("Usage: java -jar pit.jar --edit [encrypted file] [file in archive] [new file]");
+                    return;
+                }
+
+                try {
+                    Map<String, byte[]> files = Pit.decryptToMemory(new File(args[1]), password);
+                    File newFile = new File(args[3]);
+                    if (files.containsKey(args[2])) {
+                        files.put(args[2], Files.readAllBytes(newFile.toPath()));
+                        Pit.encryptFromMemory(files, new File(args[1]), password);
+                        System.out.println("File edited: " + args[2]);
+                    } else {
+                        System.err.println("File not found: " + args[2]);
+                    }
+                } catch (Exception e) {
+                    System.err.println("Failed to edit file!");
+                    throw e;
+                }
+                break;
+            case "--write":
+                if (args.length < 3) {
+                    System.err.println("Usage: java -jar pit.jar --write [encrypted file] [file name]");
+                    return;
+                }
+
+                try {
+                    Map<String, byte[]> files = Pit.decryptToMemory(new File(args[1]), password);
+                    System.out.println("Enter content for " + args[2] + " (end with an empty line):");
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while (!(line = console.readLine()).isEmpty()) {
+                        sb.append(line).append(System.lineSeparator());
+                    }
+                    files.put(args[2], sb.toString().getBytes(StandardCharsets.UTF_8));
+                    Pit.encryptFromMemory(files, new File(args[1]), password);
+                    System.out.println("File added: " + args[2]);
+                } catch (Exception e) {
+                    System.err.println("Failed to add inlined file!");
+                    throw e;
+                }
+                break;
             default:
                 System.out.println("Unknown mode: " + args[0]);
         }
