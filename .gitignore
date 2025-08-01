@@ -1,0 +1,36 @@
+# Gradle
+
+.gradle/
+build/
+out/
+classes/
+.kotlin/
+
+# Eclipse
+
+*.launch
+
+# Idea
+
+.idea/
+!.idea/dictionaries/
+!.idea/dictionaries/*
+*.iml
+*.ipr
+*.iws
+
+# VSCode
+
+.settings/
+.vscode/
+bin/
+.classpath
+.project
+
+# macOS
+
+DS_Store
+
+# Misc
+
+run/
