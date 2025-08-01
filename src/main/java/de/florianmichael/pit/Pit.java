@@ -39,18 +39,18 @@ public final class Pit {
 
     public static void main(final String[] args) throws Exception {
         if (args.length == 0) {
-            System.out.println("Private Information Tracker (pit)");
+            System.out.println("Private Information Tracker (https://github.com/FlorianMichael/pit)");
             System.out.println();
-            System.out.println("Usage:");
-            System.out.println("  Encrypt:   java -jar pit.jar --encrypt [folder] [output file]");
-            System.out.println("  Decrypt:   java -jar pit.jar --decrypt [input file] [output folder]");
-            System.out.println("  View:      java -jar pit.jar --view [input file] (file in archive)");
-            System.out.println("  Add:       java -jar pit.jar --add [encrypted file] [file to add]");
-            System.out.println("  Remove:    java -jar pit.jar --remove [encrypted file] [file to remove]");
-            System.out.println("  Edit:      java -jar pit.jar --edit [encrypted file] [file in archive] [new file]");
-            System.out.println("  Write:     java -jar pit.jar --write [encrypted file] [file name]");
+            System.out.println("Save and load object files from a folder:");
+            System.out.println("  Encrypt:   --encrypt (folder) (output file)");
+            System.out.println("  Decrypt:   --decrypt (input file) (output folder)");
             System.out.println();
-            System.out.println("GitHub: https://github.com/FlorianMichael/pit");
+            System.out.println("Utilities to manage object files, specialized on accounts and passwords:");
+            System.out.println("  View:      --view [input file] (file in archive)");
+            System.out.println("  Add:       --add [encrypted file] [file to add]");
+            System.out.println("  Remove:    --remove [encrypted file] [file to remove]");
+            System.out.println("  Edit:      --edit [encrypted file] [file in archive] [new file]");
+            System.out.println("  Write:     --write [encrypted file] [file name]");
             return;
         }
 
@@ -74,7 +74,6 @@ public final class Pit {
                     throw e;
                 }
                 break;
-
             case "-d":
             case "--decrypt":
                 final String inputFile = args.length > 1 ? args[1] : "encrypted.zip";
@@ -91,7 +90,7 @@ public final class Pit {
             case "-v":
             case "--view":
                 if (args.length < 2) {
-                    System.err.println("Usage: java -jar pit.jar -v (encrypted file) [file inside archive]");
+                    System.err.println("Usage: -v (encrypted file) [file inside archive]");
                     return;
                 }
 
@@ -122,7 +121,7 @@ public final class Pit {
                 break;
             case "--add":
                 if (args.length < 3) {
-                    System.err.println("Usage: java -jar pit.jar --add [encrypted file] [file to add]");
+                    System.err.println("Usage: --add [encrypted file] [file to add]");
                     return;
                 }
 
@@ -139,7 +138,7 @@ public final class Pit {
                 break;
             case "--remove":
                 if (args.length < 3) {
-                    System.err.println("Usage: java -jar pit.jar --remove [encrypted file] [file to remove]");
+                    System.err.println("Usage: --remove [encrypted file] [file to remove]");
                     return;
                 }
 
@@ -156,10 +155,9 @@ public final class Pit {
                     throw e;
                 }
                 break;
-
             case "--edit":
                 if (args.length < 4) {
-                    System.err.println("Usage: java -jar pit.jar --edit [encrypted file] [file in archive] [new file]");
+                    System.err.println("Usage: --edit [encrypted file] [file in archive] [new file]");
                     return;
                 }
 
@@ -180,7 +178,7 @@ public final class Pit {
                 break;
             case "--write":
                 if (args.length < 3) {
-                    System.err.println("Usage: java -jar pit.jar --write [encrypted file] [file name]");
+                    System.err.println("Usage: --write [encrypted file] [file name]");
                     return;
                 }
 
@@ -203,13 +201,6 @@ public final class Pit {
             default:
                 System.out.println("Unknown mode: " + args[0]);
         }
-    }
-
-    public static SecretKey deriveKey(final String password, final byte[] salt) throws Exception {
-        final SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
-        final KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, 65536, 256);
-        final SecretKey tmp = factory.generateSecret(spec);
-        return new SecretKeySpec(tmp.getEncoded(), "AES");
     }
 
     public static Map<String, byte[]> decryptToMemory(final File file, final String password) throws Exception {
@@ -262,12 +253,6 @@ public final class Pit {
         }
     }
 
-    public static CipherInputStream createDecryptionStream(final InputStream in, final SecretKey key, final byte[] iv) throws Exception {
-        Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
-        return new CipherInputStream(in, cipher);
-    }
-
     public static void encryptFolder(final String folderPath, final String outputFilePath, final String password) throws Exception {
         final File folder = new File(folderPath);
         if (!folder.exists() || !folder.isDirectory()) {
@@ -297,6 +282,19 @@ public final class Pit {
             outFile.getParentFile().mkdirs();
             Files.write(outFile.toPath(), entry.getValue());
         }
+    }
+
+    public static SecretKey deriveKey(final String password, final byte[] salt) throws Exception {
+        final SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256");
+        final KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, 65536, 256);
+        final SecretKey tmp = factory.generateSecret(spec);
+        return new SecretKeySpec(tmp.getEncoded(), "AES");
+    }
+
+    public static CipherInputStream createDecryptionStream(final InputStream in, final SecretKey key, final byte[] iv) throws Exception {
+        final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
+        return new CipherInputStream(in, cipher);
     }
 
 }
