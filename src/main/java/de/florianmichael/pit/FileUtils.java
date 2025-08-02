@@ -27,6 +27,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.SecureRandom;
 import java.util.HashMap;
 import java.util.Map;
@@ -195,16 +197,17 @@ public final class FileUtils {
      * @throws Exception if decryption fails or an error occurs while reading the Vault file
      */
     public static void decryptVault(final String inputFilePath, final String outputFolderPath, final String password) throws Exception {
-        final File outputDir = new File(outputFolderPath).getCanonicalFile();
         final Map<String, byte[]> files = decrypt(new File(inputFilePath), password);
+        final Path outputBasePath = Paths.get(outputFolderPath).toAbsolutePath().normalize();
+
         for (final Map.Entry<String, byte[]> entry : files.entrySet()) {
-            final File outFile = new File(outputFolderPath, entry.getKey());
-            if (!outFile.getPath().startsWith(outputDir.getPath())) {
+            final Path outPath = outputBasePath.resolve(entry.getKey()).normalize();
+            if (!outPath.startsWith(outputBasePath)) {
                 throw new SecurityException("Invalid path: " + entry.getKey());
             }
 
-            outFile.getParentFile().mkdirs();
-            Files.write(outFile.toPath(), entry.getValue());
+            Files.createDirectories(outPath.getParent());
+            Files.write(outPath, entry.getValue());
         }
     }
 

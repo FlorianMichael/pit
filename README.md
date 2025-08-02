@@ -31,4 +31,4 @@ java -jar pit.jar --view passwords google
 If you encounter any issues, please report them on the
 [issue tracker](https://github.com/FlorianMichael/pit/issues).  
 If you just want to talk or need help with pit feel free to join my
-[Discord](https://discord.gg/BwWhCHUKDf).
+[Discord](http://florianmichael.de/discord).
