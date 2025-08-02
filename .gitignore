@@ -13,8 +13,8 @@ classes/
 # Idea
 
 .idea/
-!.idea/dictionaries/
-!.idea/dictionaries/*
+!.idea/copyright/*
+!.idea/scopes/*
 *.iml
 *.ipr
 *.iws
