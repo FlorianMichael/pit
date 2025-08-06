@@ -119,14 +119,18 @@ public final class FileUtils {
      * @throws Exception if encryption fails or an error occurs while writing the file
      */
     public static void encrypt(final Map<String, byte[]> files, final File output, final String password) throws Exception {
-        final Map<String, byte[]> allFiles = new HashMap<>();
-
+        final Map<String, byte[]> existingFiles = new HashMap<>();
         if (output.exists()) {
             try (final ZipFile zipFile = new ZipFile(output)) {
                 zipFile.stream().forEach(entry -> {
-                    try (InputStream is = zipFile.getInputStream(entry)) {
+                    if (files.containsKey(entry.getName())) {
+                        // New entries override existing ones
+                        return;
+                    }
+
+                    try (final InputStream is = zipFile.getInputStream(entry)) {
                         byte[] data = is.readAllBytes();
-                        allFiles.put(entry.getName(), data);
+                        existingFiles.put(entry.getName(), data);
                     } catch (IOException e) {
                         throw new UncheckedIOException(e);
                     }
@@ -134,12 +138,18 @@ public final class FileUtils {
             }
         }
 
-        allFiles.putAll(files);
-
+        // Keep existing entries untouched, encrypt new ones
         try (final FileOutputStream fos = new FileOutputStream(output);
              final ZipOutputStream zos = new ZipOutputStream(fos)) {
 
-            for (Map.Entry<String, byte[]> entry : allFiles.entrySet()) {
+            for (final Map.Entry<String, byte[]> entry : existingFiles.entrySet()) {
+                final ZipEntry zipEntry = new ZipEntry(entry.getKey());
+                zos.putNextEntry(zipEntry);
+                zos.write(entry.getValue());
+                zos.closeEntry();
+            }
+
+            for (final Map.Entry<String, byte[]> entry : files.entrySet()) {
                 writeEncryptedZipEntry(zos, entry.getKey(), entry.getValue(), password);
             }
         }
