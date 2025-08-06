@@ -21,22 +21,24 @@ package de.florianmichael.pit;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.CipherOutputStream;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.IvParameterSpec;
 
@@ -44,118 +46,123 @@ import static de.florianmichael.pit.KeyUtils.deriveKey;
 
 public final class FileUtils {
 
-    private static final int SALT_LENGTH = 16;
+    public static final int SALT_LENGTH = 16;
 
     /**
-     * Decrypts a specific entry from a Vault file.
+     * Encrypts a vault containing multiple files into a single encrypted ZIP file.
      *
-     * @param file      the Vault file containing the encrypted entry
+     * @param files    a map of file names to their byte content
+     * @param output   the output file where the encrypted vault will be saved
+     * @param password the password used for encryption
+     * @throws Exception if an error occurs during encryption
+     */
+    public static void encryptVault(final Map<String, byte[]> files, final File output, final String password) throws Exception {
+        final byte[] salt = new byte[SALT_LENGTH];
+        final byte[] iv = new byte[16];
+        new SecureRandom().nextBytes(salt);
+        new SecureRandom().nextBytes(iv);
+
+        final SecretKey key = deriveKey(password, salt);
+        final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
+
+        try (final FileOutputStream fos = new FileOutputStream(output)) {
+            fos.write(salt);
+            fos.write(iv);
+
+            try (final CipherOutputStream cos = new CipherOutputStream(fos, cipher);
+                 final ZipOutputStream zos = new ZipOutputStream(cos)) {
+
+                for (final Map.Entry<String, byte[]> entry : files.entrySet()) {
+                    writeEncryptedZipEntry(zos, entry.getKey(), entry.getValue(), password);
+                }
+            }
+        }
+    }
+
+    /**
+     * Decrypts a vault from an encrypted ZIP file and returns the files as a map.
+     *
+     * @param file     the encrypted vault file
+     * @param password the password used for decryption
+     * @return a map of file names to their decrypted byte content
+     * @throws Exception if an error occurs during decryption
+     */
+    public static Map<String, byte[]> decryptVault(final File file, final String password) throws Exception {
+        try (final FileInputStream fis = new FileInputStream(file)) {
+            final byte[] salt = fis.readNBytes(SALT_LENGTH);
+            final byte[] iv = fis.readNBytes(16);
+
+            final SecretKey key = deriveKey(password, salt);
+            final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
+
+            try (final CipherInputStream cis = new CipherInputStream(fis, cipher);
+                 final ZipInputStream zis = new ZipInputStream(cis)) {
+
+                final Map<String, byte[]> result = new HashMap<>();
+                ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    if (entry.isDirectory()) {
+                        continue;
+                    }
+
+                    final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    zis.transferTo(buffer);
+                    result.put(entry.getName(), decryptBytes(buffer.toByteArray(), password));
+                }
+
+                return result;
+            }
+        }
+    }
+
+    /**
+     * Decrypts a specific entry from an encrypted vault file.
+     *
+     * @param vaultFile the encrypted vault file
      * @param entryName the name of the entry to decrypt
-     * @param password  the password used for encryption
-     * @return the decrypted content of the entry
-     * @throws Exception if decryption fails or the entry is not found
+     * @param password  the password used for decryption
+     * @return the decrypted content of the entry as a byte array
+     * @throws Exception if an error occurs during decryption or if the entry is not found
      */
-    public static byte[] decrypt(final File file, final String entryName, final String password) throws Exception {
-        try (final FileInputStream fis = new FileInputStream(file);
-             final ZipInputStream zis = new ZipInputStream(fis)) {
+    public static byte[] decryptEntry(final File vaultFile, final String entryName, final String password) throws Exception {
+        try (final FileInputStream fis = new FileInputStream(vaultFile)) {
+            final byte[] salt = fis.readNBytes(SALT_LENGTH);
+            final byte[] iv = fis.readNBytes(16);
 
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
-                if (!entry.getName().equals(entryName)) {
-                    continue;
+            final SecretKey key = deriveKey(password, salt);
+            final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
+
+            try (final CipherInputStream cis = new CipherInputStream(fis, cipher);
+                 final ZipInputStream zis = new ZipInputStream(cis)) {
+
+                ZipEntry entry;
+                while ((entry = zis.getNextEntry()) != null) {
+                    if (entry.isDirectory()) continue;
+                    if (!entry.getName().equals(entryName)) continue;
+
+                    final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    zis.transferTo(buffer);
+                    return decryptBytes(buffer.toByteArray(), password);
                 }
-
-                final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                zis.transferTo(buffer);
-                return decryptFile(buffer.toByteArray(), password);
             }
         }
 
-        throw new FileNotFoundException("File not found in archive: " + entryName);
+        throw new IOException("Entry not found: " + entryName);
     }
 
     /**
-     * Decrypts all entries in a Vault file and returns them as a map.
+     * Writes an encrypted entry to a ZIP output stream.
      *
-     * @param file     the Vault file containing the encrypted entries
+     * @param zos      the ZipOutputStream to write to
+     * @param name     the name of the entry in the ZIP file
+     * @param content  the content of the entry as a byte array
      * @param password the password used for encryption
-     * @return a map where the keys are entry names and the values are the decrypted file contents
-     * @throws Exception if decryption fails or an error occurs while reading the file
+     * @throws Exception if an error occurs during encryption or writing
      */
-    public static Map<String, byte[]> decrypt(final File file, final String password) throws Exception {
-        final Map<String, byte[]> result = new HashMap<>();
-
-        try (final FileInputStream fis = new FileInputStream(file);
-             final ZipInputStream zis = new ZipInputStream(fis)) {
-
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
-                if (entry.isDirectory()) {
-                    continue;
-                }
-
-                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                zis.transferTo(buffer);
-                final byte[] fullContent = buffer.toByteArray();
-
-                try {
-                    result.put(entry.getName(), decryptFile(fullContent, password));
-                } catch (Exception e) {
-                    System.err.println("Failed to decrypt entry: " + entry.getName());
-                    throw e;
-                }
-            }
-        }
-
-        return result;
-    }
-
-    /**
-     * Encrypts multiple files into a Vault file.
-     *
-     * @param files    a map where the keys are file names and the values are the file contents as byte arrays
-     * @param output   the output file where the encrypted content will be written
-     * @param password the password used for encryption
-     * @throws Exception if encryption fails or an error occurs while writing the file
-     */
-    public static void encrypt(final Map<String, byte[]> files, final File output, final String password) throws Exception {
-        final Map<String, byte[]> existingFiles = new HashMap<>();
-        if (output.exists()) {
-            try (final ZipFile zipFile = new ZipFile(output)) {
-                zipFile.stream().forEach(entry -> {
-                    if (files.containsKey(entry.getName())) {
-                        // New entries override existing ones
-                        return;
-                    }
-
-                    try (final InputStream is = zipFile.getInputStream(entry)) {
-                        byte[] data = is.readAllBytes();
-                        existingFiles.put(entry.getName(), data);
-                    } catch (IOException e) {
-                        throw new UncheckedIOException(e);
-                    }
-                });
-            }
-        }
-
-        // Keep existing entries untouched, encrypt new ones
-        try (final FileOutputStream fos = new FileOutputStream(output);
-             final ZipOutputStream zos = new ZipOutputStream(fos)) {
-
-            for (final Map.Entry<String, byte[]> entry : existingFiles.entrySet()) {
-                final ZipEntry zipEntry = new ZipEntry(entry.getKey());
-                zos.putNextEntry(zipEntry);
-                zos.write(entry.getValue());
-                zos.closeEntry();
-            }
-
-            for (final Map.Entry<String, byte[]> entry : files.entrySet()) {
-                writeEncryptedZipEntry(zos, entry.getKey(), entry.getValue(), password);
-            }
-        }
-    }
-
-    public static void writeEncryptedZipEntry(final ZipOutputStream zos, final String name, final byte[] content, final String password) throws Exception {
+    public static void writeEncryptedZipEntry(final ZipOutputStream zos, String name, final byte[] content, final String password) throws Exception {
         final byte[] salt = new byte[SALT_LENGTH];
         final byte[] iv = new byte[16];
         new SecureRandom().nextBytes(salt);
@@ -177,41 +184,185 @@ public final class FileUtils {
         zos.closeEntry();
     }
 
-    // --------------------------
+    /**
+     * Decrypts a file that was encrypted with the specified password.
+     *
+     * @param bytes    the encrypted file as a byte array
+     * @param password the password used for decryption
+     * @return the decrypted file content as a byte array
+     * @throws Exception if an error occurs during decryption
+     */
+    private static byte[] decryptBytes(final byte[] bytes, final String password) throws Exception {
+        if (bytes.length < SALT_LENGTH + 16) {
+            throw new IllegalArgumentException("Encrypted entry is too short to be valid.");
+        }
+
+        final byte[] salt = Arrays.copyOfRange(bytes, 0, SALT_LENGTH);
+        final byte[] iv = Arrays.copyOfRange(bytes, SALT_LENGTH, SALT_LENGTH + 16);
+        final byte[] encryptedData = Arrays.copyOfRange(bytes, SALT_LENGTH + 16, bytes.length);
+
+        final SecretKey key = deriveKey(password, salt);
+        final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+        cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
+        return cipher.doFinal(encryptedData);
+    }
+
+    public static void addEntry(File archive, String entryName, byte[] content, String password) throws Exception {
+        processArchiveEntryModification(archive, password, (zis, zos) -> {
+            Set<String> written = new HashSet<>();
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (entry.getName().equals(entryName)) {
+                    continue; // override
+                }
+
+                copyZipEntry(zis, zos, entry);
+                written.add(entry.getName());
+            }
+
+            if (!written.contains(entryName)) {
+                writeEncryptedZipEntry(zos, entryName, content, password);
+            }
+        });
+    }
+
+    public static void removeEntry(final File archive, final String entryName, final String password) throws Exception {
+        processArchiveEntryModification(archive, password, (zis, zos) -> {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (entry.getName().equals(entryName)) {
+                    continue; // skip it
+                }
+
+                copyZipEntry(zis, zos, entry);
+            }
+        });
+    }
+
+    public static void renameEntry(final File archive, final String oldName, final String newName, final String password) throws Exception {
+        processArchiveEntryModification(archive, password, (zis, zos) -> {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (entry.getName().equals(oldName)) {
+                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    zis.transferTo(buffer);
+                    byte[] decrypted = decryptBytes(buffer.toByteArray(), password);
+                    writeEncryptedZipEntry(zos, newName, decrypted, password);
+                } else {
+                    copyZipEntry(zis, zos, entry);
+                }
+            }
+        });
+    }
+
+    public static void editEntry(final File archive, final String entryName, final byte[] newContent, final String password) throws Exception {
+        processArchiveEntryModification(archive, password, (zis, zos) -> {
+            boolean found = false;
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                if (entry.getName().equals(entryName)) {
+                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    zis.transferTo(buffer);
+                    writeEncryptedZipEntry(zos, entryName, newContent, password);
+                    found = true;
+                } else {
+                    copyZipEntry(zis, zos, entry);
+                }
+            }
+            if (!found) {
+                throw new IOException("Entry to edit not found: " + entryName);
+            }
+        });
+    }
 
     /**
-     * Encrypts all files in a folder into a Vault file.
+     * Processes an archive entry modification by reading the existing entries,
+     * applying the specified modifier, and writing the modified entries to a new archive.
      *
-     * @param folderPath     the path to the folder containing files to encrypt
-     * @param outputFilePath the path where the encrypted Vault file will be saved
-     * @param password       the password used for encryption
-     * @throws Exception if encryption fails or an error occurs while reading the folder
+     * @param archive  the archive file to modify
+     * @param password the password used for encryption/decryption
+     * @param modifier the modifier that applies changes to the entries
+     * @throws Exception if an error occurs during processing
      */
-    public static void encryptVault(final String folderPath, final String outputFilePath, final String password) throws Exception {
-        final File folder = new File(folderPath);
+    private static void processArchiveEntryModification(final File archive, final String password, final ArchiveModifier modifier) throws Exception {
+        final File tempOutput = File.createTempFile("vault_modified", ".pit");
+
+        try (
+            final FileInputStream fis = new FileInputStream(archive);
+            final FileOutputStream fos = new FileOutputStream(tempOutput)
+        ) {
+            final byte[] salt = fis.readNBytes(SALT_LENGTH);
+            final byte[] iv = fis.readNBytes(16);
+
+            final SecretKey key = deriveKey(password, salt);
+            final Cipher decryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            decryptCipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
+
+            final Cipher encryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            final byte[] newSalt = new byte[SALT_LENGTH];
+            final byte[] newIv = new byte[16];
+            new SecureRandom().nextBytes(newSalt);
+            new SecureRandom().nextBytes(newIv);
+            final SecretKey newKey = deriveKey(password, newSalt);
+            encryptCipher.init(Cipher.ENCRYPT_MODE, newKey, new IvParameterSpec(newIv));
+
+            fos.write(newSalt);
+            fos.write(newIv);
+
+            try (
+                final CipherInputStream cis = new CipherInputStream(fis, decryptCipher);
+                final ZipInputStream zis = new ZipInputStream(cis);
+                final CipherOutputStream cos = new CipherOutputStream(fos, encryptCipher);
+                final ZipOutputStream zos = new ZipOutputStream(cos)
+            ) {
+                modifier.apply(zis, zos);
+            }
+        }
+
+        Files.move(tempOutput.toPath(), archive.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private static void copyZipEntry(ZipInputStream zis, ZipOutputStream zos, ZipEntry entry) throws IOException {
+        zos.putNextEntry(new ZipEntry(entry.getName()));
+        zis.transferTo(zos);
+        zos.closeEntry();
+    }
+
+    /**
+     * Encrypts a folder and its contents into a single encrypted vault file.
+     *
+     * @param folderPath     the path to the folder to encrypt
+     * @param outputFilePath the path to the output encrypted vault file
+     * @param password       the password used for encryption
+     * @throws Exception if an error occurs during encryption
+     */
+    public static void encryptFolder(String folderPath, String outputFilePath, String password) throws Exception {
+        File folder = new File(folderPath);
         if (!folder.exists() || !folder.isDirectory()) {
             throw new IllegalArgumentException("Invalid folder: " + folderPath);
         }
 
-        final Map<String, byte[]> files = new HashMap<>();
+        Map<String, byte[]> files = new HashMap<>();
         loadFilesRecursively(folder, folder.getAbsolutePath(), files);
-        encrypt(files, new File(outputFilePath), password);
+        encryptVault(files, new File(outputFilePath), password);
     }
 
-    /**
-     * Decrypts a Vault file and extracts its contents to a specified folder.
-     *
-     * @param inputFilePath    the path to the Vault file to decrypt
-     * @param outputFolderPath the path to the folder where decrypted files will be saved
-     * @param password         the password used for decryption
-     * @throws Exception if decryption fails or an error occurs while reading the Vault file
-     */
-    public static void decryptVault(final String inputFilePath, final String outputFolderPath, final String password) throws Exception {
-        final Map<String, byte[]> files = decrypt(new File(inputFilePath), password);
-        final Path outputBasePath = Paths.get(outputFolderPath).toAbsolutePath().normalize();
+    // ----------------------- Optional Folder I/O -----------------------
 
-        for (final Map.Entry<String, byte[]> entry : files.entrySet()) {
-            final Path outPath = outputBasePath.resolve(entry.getKey()).normalize();
+    /**
+     * Decrypts an encrypted vault and writes the files to a specified output folder.
+     *
+     * @param inputFilePath    the path to the encrypted vault file
+     * @param outputFolderPath the path to the output folder where files will be written
+     * @param password         the password used for decryption
+     * @throws Exception if an error occurs during decryption or writing files
+     */
+    public static void decryptToFolder(String inputFilePath, String outputFolderPath, String password) throws Exception {
+        Map<String, byte[]> files = decryptVault(new File(inputFilePath), password);
+        Path outputBasePath = Paths.get(outputFolderPath).toAbsolutePath().normalize();
+
+        for (Map.Entry<String, byte[]> entry : files.entrySet()) {
+            Path outPath = outputBasePath.resolve(entry.getKey()).normalize();
             if (!outPath.startsWith(outputBasePath)) {
                 throw new SecurityException("Invalid path: " + entry.getKey());
             }
@@ -221,44 +372,22 @@ public final class FileUtils {
         }
     }
 
-    private static void loadFilesRecursively(final File base, final String rootPath, final Map<String, byte[]> map) throws IOException {
+    private static void loadFilesRecursively(File base, String rootPath, Map<String, byte[]> map) throws IOException {
         if (base.isDirectory()) {
-            for (File file : base.listFiles()) {
+            for (File file : Objects.requireNonNull(base.listFiles())) {
                 loadFilesRecursively(file, rootPath, map);
             }
         } else {
-            final String relativePath = base.getAbsolutePath().substring(rootPath.length() + 1).replace("\\", "/");
+            String relativePath = base.getAbsolutePath().substring(rootPath.length() + 1).replace("\\", "/");
             map.put(relativePath, Files.readAllBytes(base.toPath()));
         }
     }
 
-    // --------------------------
+    @FunctionalInterface
+    private interface ArchiveModifier {
 
-    /**
-     * Decrypts the bytes of a file into the actual file content.
-     *
-     * @param file     the encrypted file bytes
-     * @param password the password used for encryption
-     * @return the decrypted file content
-     * @throws Exception if decryption fails
-     */
-    private static byte[] decryptFile(final byte[] file, final String password) throws Exception {
-        if (file.length < SALT_LENGTH + 16) {
-            throw new IllegalArgumentException("Encrypted entry is too short to be valid.");
-        }
+        void apply(final ZipInputStream zis, final ZipOutputStream zos) throws Exception;
 
-        final byte[] salt = new byte[SALT_LENGTH];
-        final byte[] iv = new byte[16];
-        System.arraycopy(file, 0, salt, 0, SALT_LENGTH);
-        System.arraycopy(file, SALT_LENGTH, iv, 0, 16);
-
-        final byte[] encryptedData = new byte[file.length - SALT_LENGTH - 16];
-        System.arraycopy(file, SALT_LENGTH + 16, encryptedData, 0, encryptedData.length);
-
-        final SecretKey key = deriveKey(password, salt);
-        final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
-        return cipher.doFinal(encryptedData);
     }
 
 }

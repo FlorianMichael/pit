@@ -16,7 +16,7 @@ java -jar pit.jar --init passwords
 Add your first identity to it:
 
 ``
-java -jar pit.jar --generate google
+java -jar pit.jar --generate passwords google
 ``
 
 This will return a random generated password to be then used on the website.

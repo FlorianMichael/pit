@@ -23,17 +23,18 @@ import java.awt.datatransfer.StringSelection;
 import java.io.Console;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
-import java.util.zip.ZipOutputStream;
+import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.IvParameterSpec;
 import org.fusesource.jansi.AnsiConsole;
 
+import static de.florianmichael.pit.KeyUtils.deriveKey;
 import static de.florianmichael.pit.LogUtils.logCommand;
 import static de.florianmichael.pit.LogUtils.logError;
 import static de.florianmichael.pit.LogUtils.logInfo;
@@ -79,7 +80,7 @@ public final class Pit {
                 final String password = confirmPassword(requestPassword());
 
                 try {
-                    FileUtils.encrypt(new HashMap<>(), new File(filePath), password);
+                    FileUtils.encryptVault(new HashMap<>(), new File(filePath), password);
                     logSuccess("Vault initialized successfully: " + filePath);
                 } catch (final Exception e) {
                     logError("Failed to initialize vault: " + e.getMessage());
@@ -107,7 +108,7 @@ public final class Pit {
                 final String password = confirmPassword(requestPassword());
 
                 try {
-                    FileUtils.encryptVault(folderPath, filePath, password);
+                    FileUtils.encryptFolder(folderPath, filePath, password);
                     logSuccess("File encrypted successfully: " + filePath);
                 } catch (final Exception e) {
                     logError("Failed to encrypt file: " + e.getMessage());
@@ -124,7 +125,7 @@ public final class Pit {
                 final String password = requestPassword();
 
                 try {
-                    FileUtils.decryptVault(filePath, folderPath, password);
+                    FileUtils.decryptToFolder(filePath, folderPath, password);
                     logSuccess("File decrypted successfully to: " + folderPath);
                 } catch (final Exception e) {
                     logError("Failed to decrypt file: " + e.getMessage());
@@ -138,8 +139,20 @@ public final class Pit {
 
                 final String filePath = args[1];
                 final String entryPath = args.length > 2 ? args[2].replace("\\", "/") : "";
+                final String password = requestPassword();
 
-                try (final ZipInputStream zis = new ZipInputStream(new FileInputStream(filePath))) {
+                try {
+                    final FileInputStream fis = new FileInputStream(filePath);
+                    final byte[] salt = fis.readNBytes(FileUtils.SALT_LENGTH);
+                    final byte[] iv = fis.readNBytes(16);
+
+                    final SecretKey key = deriveKey(password, salt);
+                    final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+                    cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
+
+                    final CipherInputStream cis = new CipherInputStream(fis, cipher);
+                    final ZipInputStream zis = new ZipInputStream(cis);
+
                     final ZipWalker.Node root = ZipWalker.buildZipTree(zis);
 
                     final ZipWalker.Node node = ZipWalker.findNode(root, entryPath);
@@ -152,11 +165,14 @@ public final class Pit {
                         logInfo("Contents of folder " + (entryPath.isEmpty() ? "/" : entryPath) + ":");
                         ZipWalker.printTree(node, 0);
                     } else {
-                        final String password = requestPassword();
-                        final byte[] content = FileUtils.decrypt(new File(filePath), entryPath, password);
+                        final byte[] content = FileUtils.decryptEntry(new File(filePath), entryPath, password);
                         logInfo("Content of " + entryPath + ":");
                         System.out.println(new String(content));
                     }
+
+                    cis.close();
+                    zis.close();
+                    fis.close();
                 } catch (final Exception e) {
                     logError("Failed to read archive: " + e.getMessage());
                 }
@@ -173,7 +189,19 @@ public final class Pit {
                     return;
                 }
 
-                remove(args);
+                final String filePath = args[1];
+                final String entryPath = args[2].replace("\\", "/");
+                if (!Files.exists(Path.of(filePath))) {
+                    logError("File does not exist: " + filePath);
+                    return;
+                }
+                try {
+                    final String password = requestPassword();
+                    FileUtils.removeEntry(new File(filePath), entryPath, password);
+                    logSuccess("Entry removed successfully: " + entryPath);
+                } catch (final Exception e) {
+                    logError("Failed to remove entry: " + e.getMessage());
+                }
             }
             case "--rename", "-rn" -> {
                 if (args.length != 4) {
@@ -191,7 +219,8 @@ public final class Pit {
                 final String newName = args[3].replace("\\", "/");
 
                 try {
-                    renameEntry(filePath, oldName, newName);
+                    final String password = requestPassword();
+                    FileUtils.renameEntry(new File(filePath), oldName, newName, password);
                     logSuccess("Entry renamed successfully to: " + newName);
                 } catch (final Exception e) {
                     logError("Failed to rename entry: " + e.getMessage());
@@ -216,13 +245,11 @@ public final class Pit {
                     }
 
                     final String password = requestPassword();
-                    final byte[] content = FileUtils.decrypt(new File(filePath), entryPath, password);
+                    final byte[] content = FileUtils.decryptEntry(new File(filePath), entryPath, password);
                     ConsoleFileEditor.open(new String(content).lines().toList(), updatedLines -> {
                         try {
                             final byte[] newContent = String.join("\n", updatedLines).getBytes();
-                            FileUtils.encrypt(new HashMap<>() {{
-                                put(entryPath, newContent);
-                            }}, new File(filePath), password);
+                            FileUtils.editEntry(new File(filePath), entryPath, newContent, password);
                             logSuccess("Entry edited successfully.");
                         } catch (final Exception e) {
                             logError("Failed to save changes: " + e.getMessage());
@@ -253,9 +280,7 @@ public final class Pit {
                     }
                     final String content = sb.toString().trim();
                     final String password = requestPassword();
-                    FileUtils.encrypt(new HashMap<>() {{
-                        put(entryName, content.getBytes());
-                    }}, new File(filePath), password);
+                    FileUtils.addEntry(new File(filePath), entryName, content.getBytes(), password);
                     logSuccess("Entry created successfully: " + entryName);
                 } catch (final Exception e) {
                     logError("Failed to create entry: " + e.getMessage());
@@ -278,9 +303,7 @@ public final class Pit {
                 try {
                     final String content = new String(Files.readAllBytes(Path.of(entryPath)));
                     final String password = requestPassword();
-                    FileUtils.encrypt(new HashMap<>() {{
-                        put(entryPath, content.getBytes());
-                    }}, new File(filePath), password);
+                    FileUtils.addEntry(new File(filePath), entryPath, content.getBytes(), password);
                     logSuccess("Entry added successfully: " + entryPath);
                 } catch (final Exception e) {
                     logError("Failed to add entry: " + e.getMessage());
@@ -301,9 +324,7 @@ public final class Pit {
                 final String fileName = args[2].replace("\\", "/");
                 try {
                     final String password = KeyUtils.generateRandomPassword();
-                    FileUtils.encrypt(new HashMap<>() {{
-                        put(fileName, password.getBytes());
-                    }}, new File(filePath), requestPassword());
+                    FileUtils.addEntry(new File(filePath), fileName, password.getBytes(), requestPassword());
                     logSuccess("Generated password: " + password);
                     copyToClipboard(password);
                     logInfo("Password copied to clipboard.");
@@ -326,8 +347,8 @@ public final class Pit {
                 try {
                     final String oldPassword = requestPassword();
                     final String newPassword = confirmPassword(requestPassword());
-                    final Map<String, byte[]> vault = FileUtils.decrypt(new File(filePath), oldPassword);
-                    FileUtils.encrypt(vault, new File(filePath), newPassword);
+                    final Map<String, byte[]> vault = FileUtils.decryptVault(new File(filePath), oldPassword);
+                    FileUtils.encryptVault(vault, new File(filePath), newPassword);
                     vault.clear();
                     logInfo("Vault re-encrypted successfully.");
                 } catch (final Exception e) {
@@ -349,7 +370,6 @@ public final class Pit {
                 }
 
                 final int iterations = args.length == 3 ? Integer.parseInt(args[2]) : 65536;
-
                 if (keyLength <= 0 || iterations <= 0) {
                     logError("Key length and iteration count must be positive integers.");
                     return;
@@ -389,113 +409,6 @@ public final class Pit {
         logCommand("--add, -a", "<vault> <file>", "Add an external file to the vault");
         logCommand("--generate, -g", "<vault> <name>", "Generate a credentials entry");
         System.out.println();
-    }
-
-    private static void remove(final String[] args) {
-        final File zipFile = new File(args[1]);
-        final String removePath = args[2].replace("\\", "/");
-
-        if (!zipFile.exists()) {
-            logError("ZIP file does not exist: " + zipFile);
-            return;
-        }
-
-        File tempFile;
-        try {
-            tempFile = File.createTempFile("pit_remove_", ".zip");
-            tempFile.deleteOnExit();
-        } catch (final IOException e) {
-            logError("Failed to create temp file: " + e.getMessage());
-            return;
-        }
-
-        try (final ZipInputStream zis = new ZipInputStream(new FileInputStream(zipFile));
-             final ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(tempFile))) {
-
-            ZipEntry entry;
-            boolean found = false;
-
-            while ((entry = zis.getNextEntry()) != null) {
-                final String name = entry.getName();
-                if (removePath.endsWith("/") ? name.startsWith(removePath) : name.equals(removePath)) {
-                    found = true;
-                } else {
-                    zos.putNextEntry(new ZipEntry(name));
-                    zis.transferTo(zos);
-                    zos.closeEntry();
-                }
-
-                zis.closeEntry();
-            }
-
-            if (!found) {
-                logError("Entry not found to remove: " + removePath);
-                return;
-            }
-
-        } catch (final IOException e) {
-            logError("Error processing ZIP file: " + e.getMessage());
-            return;
-        }
-
-        if (!zipFile.delete()) {
-            logError("Failed to delete original ZIP file.");
-            return;
-        }
-
-        if (!tempFile.renameTo(zipFile)) {
-            logError("Failed to rename temp file.");
-            return;
-        }
-
-        logSuccess("Removed " + removePath + " from archive successfully.");
-    }
-
-    private static void renameEntry(final String filePath, final String oldName, final String newName) {
-        try (final ZipInputStream zis = new ZipInputStream(new FileInputStream(filePath));
-             final ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(filePath + ".tmp"))) {
-
-            ZipEntry entry;
-            boolean renamed = false;
-
-            while ((entry = zis.getNextEntry()) != null) {
-                if (entry.getName().equals(oldName)) {
-                    zos.putNextEntry(new ZipEntry(newName));
-                    renamed = true;
-                } else {
-                    zos.putNextEntry(new ZipEntry(entry.getName()));
-                }
-
-                zis.transferTo(zos);
-                zos.closeEntry();
-                zis.closeEntry();
-            }
-
-            if (!renamed) {
-                logError("Entry not found to rename: " + oldName);
-                return;
-            }
-
-        } catch (final IOException e) {
-            logError("Error processing ZIP file: " + e.getMessage());
-            return;
-        }
-
-        // Replace original file with the modified one
-        final File originalFile = new File(filePath);
-        final File tempFile = new File(filePath + ".tmp");
-
-        if (!originalFile.delete()) {
-            logError("Failed to delete original ZIP file.");
-            return;
-        }
-
-        if (!tempFile.renameTo(originalFile)) {
-            logError("Failed to rename temp file.");
-            return;
-        }
-
-        logSuccess("Renamed " + oldName + " to " + newName + " successfully.");
     }
 
     // ----
