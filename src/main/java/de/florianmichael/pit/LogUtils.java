@@ -44,13 +44,8 @@ public final class LogUtils {
         System.out.println(ansi().bold().fg(Ansi.Color.WHITE).a(title).reset());
     }
 
-    public static void logSubsection(final String title) {
-        System.out.println();
-        System.out.println(ansi().bold().fgBlue().a(title).reset());
-    }
-
-    public static void logCommand(final String flags, final String args, final String desc) {
-        final String command = String.format("   %-20s %-30s %s", flags, args, desc);
+    public static void logCommand(final String names, final String args, final String desc) {
+        final String command = String.format("   %-20s %-30s %s", names, args, desc);
         System.out.println(ansi().fgBrightBlack().a(command).reset());
     }
 

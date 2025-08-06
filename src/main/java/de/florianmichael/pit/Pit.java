@@ -26,9 +26,12 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Scanner;
 import java.util.zip.ZipInputStream;
 import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
@@ -41,18 +44,20 @@ import static de.florianmichael.pit.LogUtils.logCommand;
 import static de.florianmichael.pit.LogUtils.logError;
 import static de.florianmichael.pit.LogUtils.logInfo;
 import static de.florianmichael.pit.LogUtils.logSection;
-import static de.florianmichael.pit.LogUtils.logSubsection;
 import static de.florianmichael.pit.LogUtils.logSuccess;
 import static de.florianmichael.pit.LogUtils.logWarning;
 import static org.fusesource.jansi.Ansi.ansi;
 
 public final class Pit {
 
-    public static void main(final String[] args) {
-        if (args.length == 0) {
-            logError("Usage: pit <file> [<file>...]");
-            return;
-        }
+    private static String RANDOM_STRING;
+
+    private static File vault = null;
+    private static byte[] key = null;
+
+    public static void main(final String[] programArgs) {
+        AnsiConsole.systemInstall();
+        Runtime.getRuntime().addShutdownHook(new Thread(AnsiConsole::systemUninstall));
 
         final Console console = System.console();
         if (console == null) {
@@ -60,362 +65,135 @@ public final class Pit {
             return;
         }
 
-        AnsiConsole.systemInstall();
-        Runtime.getRuntime().addShutdownHook(new Thread(AnsiConsole::systemUninstall));
+        if (programArgs.length < 2) {
+            System.out.println(ansi().fgBrightBlue().bold().a("Pit").reset().a(" - https://github.com/FlorianMichael/pit"));
+            System.out.println();
+            logSection("Usage:");
+            logCommand("init, i", "<name>", "Initialize a new encrypted vault");
+            logCommand("encrypt, e", "<folder> <vault>", "Encrypt a folder into a vault");
+            logCommand("session, s", "<vault>", "Load an existing vault");
+            return;
+        }
 
-        final String command = args[0].toLowerCase();
-        switch (command) {
-            case "--help", "-h" -> printHelp();
-            case "--init", "-i" -> {
-                if (args.length != 2) {
-                    logError("Usage: pit --init <file path>");
+        final String action = programArgs[0];
+        final String[] args = Arrays.copyOfRange(programArgs, 1, programArgs.length);
+        switch (action) {
+            case "init", "i" -> init(args);
+            case "encrypt", "e" -> encrypt(args);
+            case "session", "s" -> startSession(args);
+        }
+    }
+
+    private static void init(final String[] args) {
+        if (args.length != 1) {
+            logError("Usage: init <file path>");
+            return;
+        }
+
+        final String filePath = args[0];
+        if (Files.exists(Path.of(filePath))) {
+            logWarning("File already exists: " + filePath);
+            logInfo("If you want to reinitialize it, please delete the existing vault file first.");
+            return;
+        }
+
+        final String password = confirmPassword();
+
+        try {
+            FileUtils.encryptVault(new HashMap<>(), new File(filePath), password);
+            logSuccess("Vault initialized successfully: " + filePath);
+        } catch (final Exception e) {
+            logError("Failed to initialize vault: " + e.getMessage());
+        }
+    }
+
+    private static void encrypt(final String[] args) {
+        if (args.length != 2) {
+            logError("Usage: encrypt <folder path> <file path>");
+            return;
+        }
+
+        final String folderPath = args[0];
+        if (!Files.isDirectory(Path.of(folderPath))) {
+            logError("Invalid folder path: " + folderPath);
+            return;
+        }
+
+        final String filePath = args[1];
+        if (Files.exists(Path.of(filePath))) {
+            logWarning("File already exists: " + filePath);
+            logInfo("If you want to overwrite it, please delete the existing file first.");
+            return;
+        }
+
+        final String password = confirmPassword();
+
+        try {
+            final File folder = new File(folderPath);
+            final Map<String, byte[]> files = new HashMap<>();
+            loadFilesRecursively(folder, folder.getAbsolutePath(), files);
+            FileUtils.encryptVault(files, new File(filePath), password);
+            logSuccess("File encrypted successfully: " + filePath);
+        } catch (final Exception e) {
+            logError("Failed to encrypt file: " + e.getMessage());
+        }
+    }
+
+    private static void startSession(final String[] programArgs) {
+        vault = new File(programArgs[0]);
+        if (!vault.exists()) {
+            logError("Vault file does not exist: " + vault);
+            return;
+        }
+
+        final String password = new String(System.console().readPassword("Enter master password: "));
+        if (password.isEmpty()) {
+            logError("Master password cannot be empty. Please try again.");
+            return;
+        }
+
+        try {
+            final byte[] randomBytes = new byte[16];
+            new SecureRandom().nextBytes(randomBytes);
+            RANDOM_STRING = new String(randomBytes);
+
+            key = EncryptUtils.encryptBytes(password.getBytes(), RANDOM_STRING);
+        } catch (final Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        printHelp();
+
+        final Scanner scanner = new Scanner(System.in);
+
+        while (true) {
+            final String[] input = scanner.nextLine().split(" ");
+
+            final String command = input.length > 0 ? input[0].toLowerCase() : "";
+            final String[] args = Arrays.copyOfRange(input, 1, input.length);
+            switch (command) {
+                case "help", "h" -> printHelp();
+                case "init", "i" -> init(args);
+                case "encrypt", "e" -> encrypt(args);
+                case "decrypt", "d" -> decrypt(args);
+                case "view", "v" -> view(args);
+                case "remove", "r" -> remove(args);
+                case "rename", "rn" -> rename(args);
+                case "edit", "et" -> edit(args);
+                case "create", "c" -> create(args);
+                case "add", "a" -> add(args);
+                case "generate", "g" -> generate(args);
+                case "recrypt", "rc" -> recrypt(args);
+                case "key", "kl" -> setKeyLength(args);
+                case "exit", "quit" -> {
+                    logInfo("Exiting pit. Goodbye!");
+                    System.exit(0);
                     return;
                 }
-
-                final String filePath = args[1];
-                if (Files.exists(Path.of(filePath))) {
-                    logWarning("File already exists: " + filePath);
-                    logInfo("If you want to reinitialize it, please delete the existing vault file first.");
-                    return;
+                default -> {
+                    logWarning("Unknown command: " + command);
+                    logInfo("Use help or h for usage information.");
                 }
-
-                final String password = confirmPassword(requestPassword());
-
-                try {
-                    FileUtils.encryptVault(new HashMap<>(), new File(filePath), password);
-                    logSuccess("Vault initialized successfully: " + filePath);
-                } catch (final Exception e) {
-                    logError("Failed to initialize vault: " + e.getMessage());
-                }
-            }
-            case "--encrypt", "-e" -> {
-                if (args.length != 3) {
-                    logError("Usage: pit --encrypt <folder path> <file path>");
-                    return;
-                }
-
-                final String folderPath = args[1];
-                if (!Files.isDirectory(Path.of(folderPath))) {
-                    logError("Invalid folder path: " + folderPath);
-                    return;
-                }
-
-                final String filePath = args[2];
-                if (Files.exists(Path.of(filePath))) {
-                    logWarning("File already exists: " + filePath);
-                    logInfo("If you want to overwrite it, please delete the existing file first.");
-                    return;
-                }
-
-                final String password = confirmPassword(requestPassword());
-
-                try {
-                    final File folder = new File(folderPath);
-                    final Map<String, byte[]> files = new HashMap<>();
-                    loadFilesRecursively(folder, folder.getAbsolutePath(), files);
-                    FileUtils.encryptVault(files, new File(filePath), password);
-                    logSuccess("File encrypted successfully: " + filePath);
-                } catch (final Exception e) {
-                    logError("Failed to encrypt file: " + e.getMessage());
-                }
-            }
-            case "--decrypt", "-d" -> {
-                if (args.length != 3) {
-                    logError("Usage: pit --decrypt <file path> <folder path>");
-                    return;
-                }
-
-                final String filePath = args[1];
-                if (!Files.exists(Path.of(filePath))) {
-                    logError("File does not exist: " + filePath);
-                    return;
-                }
-
-                final Path folderPath = Path.of(args[2]);
-                if (Files.exists(folderPath)) {
-                    logWarning("Folder already exists: " + folderPath);
-                    logInfo("If you want to overwrite it, please delete the existing folder first.");
-                    return;
-                }
-
-                final String password = requestPassword();
-
-                try {
-                    final Map<String, byte[]> files = FileUtils.decryptVault(new File(filePath), password);
-                    final Path outputBasePath = folderPath.toAbsolutePath().normalize();
-
-                    for (final Map.Entry<String, byte[]> entry : files.entrySet()) {
-                        final Path outPath = outputBasePath.resolve(entry.getKey()).normalize();
-                        if (!outPath.startsWith(outputBasePath)) {
-                            throw new SecurityException("Invalid path: " + entry.getKey());
-                        }
-
-                        Files.createDirectories(outPath.getParent());
-                        Files.write(outPath, entry.getValue());
-                    }
-                    logSuccess("File decrypted successfully to: " + folderPath);
-                } catch (final Exception e) {
-                    logError("Failed to decrypt file: " + e.getMessage());
-                }
-            }
-            case "--view", "-v" -> {
-                if (args.length < 2) {
-                    logError("Usage: pit --view <file path> (folder/file in archive)");
-                    return;
-                }
-
-                final String filePath = args[1];
-                if (!Files.exists(Path.of(filePath))) {
-                    logError("File does not exist: " + filePath);
-                    return;
-                }
-
-                final String entryPath = args.length > 2 ? args[2].replace("\\", "/") : "";
-                final String password = requestPassword();
-
-                try {
-                    final FileInputStream fis = new FileInputStream(filePath);
-                    final byte[] salt = fis.readNBytes(EncryptUtils.SALT_LENGTH);
-                    final byte[] iv = fis.readNBytes(16);
-
-                    final SecretKey key = deriveKey(password, salt);
-                    final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-                    cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
-
-                    final CipherInputStream cis = new CipherInputStream(fis, cipher);
-                    final ZipInputStream zis = new ZipInputStream(cis);
-
-                    final ZipWalker.Node root = ZipWalker.buildZipTree(zis);
-
-                    final ZipWalker.Node node = ZipWalker.findNode(root, entryPath);
-                    if (node == null) {
-                        logError("Entry not found: " + entryPath);
-                        return;
-                    }
-
-                    if (node.isDirectory) {
-                        logInfo("Contents of folder " + (entryPath.isEmpty() ? "/" : entryPath) + ":");
-                        ZipWalker.printTree(node, 0);
-                    } else {
-                        final byte[] content = FileUtils.decryptEntry(new File(filePath), entryPath, password);
-                        logInfo("Content of " + entryPath + ":");
-                        System.out.println(new String(content));
-                    }
-
-                    cis.close();
-                    zis.close();
-                    fis.close();
-                } catch (final Exception e) {
-                    logError("Failed to read archive: " + e.getMessage());
-                }
-            }
-            case "--remove", "-r" -> {
-                if (args.length < 3) {
-                    logError("Usage: pit --remove <file path> <folder/file in archive>");
-                    return;
-                }
-
-                final String confirm = new String(System.console().readPassword("Are you sure you want to remove the entry? Type 'yes' to confirm: "));
-                if (!"yes".equalsIgnoreCase(confirm)) {
-                    logSuccess("Removal cancelled.");
-                    return;
-                }
-
-                final String filePath = args[1];
-                if (!Files.exists(Path.of(filePath))) {
-                    logError("File does not exist: " + filePath);
-                    return;
-                }
-
-                final String entryPath = args[2].replace("\\", "/");
-                final String password = requestPassword();
-
-                try {
-                    FileUtils.removeEntry(new File(filePath), entryPath, password);
-                    logSuccess("Entry removed successfully: " + entryPath);
-                } catch (final Exception e) {
-                    logError("Failed to remove entry: " + e.getMessage());
-                }
-            }
-            case "--rename", "-rn" -> {
-                if (args.length != 4) {
-                    logError("Usage: pit --rename <file path> <folder/file in archive> <new name>");
-                    return;
-                }
-
-                final String filePath = args[1];
-                if (!Files.exists(Path.of(filePath))) {
-                    logError("File does not exist: " + filePath);
-                    return;
-                }
-
-                final String oldName = args[2].replace("\\", "/");
-                final String newName = args[3].replace("\\", "/");
-                final String password = requestPassword();
-
-                try {
-                    FileUtils.renameEntry(new File(filePath), oldName, newName, password);
-                    logSuccess("Entry renamed successfully to: " + newName);
-                } catch (final Exception e) {
-                    logError("Failed to rename entry: " + e.getMessage());
-                }
-            }
-            case "--edit", "-et" -> {
-                if (args.length != 3) {
-                    logError("Usage: pit --edit <file path> <folder/file in archive>");
-                    return;
-                }
-
-                final String filePath = args[1];
-                if (!Files.exists(Path.of(filePath))) {
-                    logError("File does not exist: " + filePath);
-                    return;
-                }
-
-                final String entryPath = args[2].replace("\\", "/");
-                final String password = requestPassword();
-
-                try {
-                    final byte[] content = FileUtils.decryptEntry(new File(filePath), entryPath, password);
-                    ConsoleFileEditor.open(new String(content).lines().toList(), updatedLines -> {
-                        try {
-                            final byte[] newContent = String.join("\n", updatedLines).getBytes();
-                            FileUtils.editEntry(new File(filePath), entryPath, newContent, password);
-                            logSuccess("Entry edited successfully.");
-                        } catch (final Exception e) {
-                            logError("Failed to save changes: " + e.getMessage());
-                        }
-                    });
-                } catch (final Exception e) {
-                    logError("Failed to edit entry: " + e.getMessage());
-                }
-            }
-            case "--create", "-c" -> {
-                if (args.length != 3) {
-                    logError("Usage: pit --create <file path> <folder/file name>");
-                    return;
-                }
-
-                final String filePath = args[1];
-                if (!Files.exists(Path.of(filePath))) {
-                    logError("File does not exist: " + filePath);
-                    return;
-                }
-
-                final String entryName = args[2].replace("\\", "/");
-                final String password = requestPassword();
-
-                try {
-                    StringBuilder sb = new StringBuilder();
-                    String line;
-                    while (!(line = console.readLine()).isEmpty()) {
-                        sb.append(line).append(System.lineSeparator());
-                    }
-                    final String content = sb.toString().trim();
-                    FileUtils.addEntry(new File(filePath), entryName, content.getBytes(), password);
-                    logSuccess("Entry created successfully: " + entryName);
-                } catch (final Exception e) {
-                    logError("Failed to create entry: " + e.getMessage());
-                }
-            }
-            case "--add", "-a" -> {
-                if (args.length != 3) {
-                    logError("Usage: pit --add <file path> <folder/file path>");
-                    return;
-                }
-
-                final String filePath = args[1];
-                if (!Files.exists(Path.of(filePath))) {
-                    logError("File does not exist: " + filePath);
-                    return;
-                }
-
-                final String entryPath = args[2].replace("\\", "/");
-                final String password = requestPassword();
-
-                try {
-                    final String content = new String(Files.readAllBytes(Path.of(entryPath)));
-                    FileUtils.addEntry(new File(filePath), entryPath, content.getBytes(), password);
-                    logSuccess("Entry added successfully: " + entryPath);
-                } catch (final Exception e) {
-                    logError("Failed to add entry: " + e.getMessage());
-                }
-            }
-            case "--generate", "-g" -> {
-                if (args.length != 3) {
-                    logError("Usage: pit --generate <file path> <file name>");
-                    return;
-                }
-
-                final String filePath = args[1];
-                if (!Files.exists(Path.of(filePath))) {
-                    logError("File does not exist: " + filePath);
-                    return;
-                }
-
-                final String fileName = args[2].replace("\\", "/");
-                final String password = KeyUtils.generateRandomPassword();
-
-                try {
-                    FileUtils.addEntry(new File(filePath), fileName, password.getBytes(), requestPassword());
-                    logSuccess("Generated password: " + password);
-                    copyToClipboard(password);
-                    logInfo("Password copied to clipboard.");
-                } catch (final Exception e) {
-                    logError("Failed to generate password: " + e.getMessage());
-                }
-            }
-            case "--recrypt", "-rc" -> {
-                if (args.length != 2) {
-                    logError("Usage: pit --recrypt <file path>");
-                    return;
-                }
-
-                final String filePath = args[1];
-                if (!Files.exists(Path.of(filePath))) {
-                    logError("File does not exist: " + filePath);
-                    return;
-                }
-
-                final String oldPassword = requestPassword();
-                final String newPassword = confirmPassword(requestPassword());
-
-                try {
-                    final Map<String, byte[]> vault = FileUtils.decryptVault(new File(filePath), oldPassword);
-                    FileUtils.encryptVault(vault, new File(filePath), newPassword);
-                    vault.clear();
-                    logInfo("Vault re-encrypted successfully.");
-                } catch (final Exception e) {
-                    logError("Failed to re-encrypt vault: " + e.getMessage());
-                }
-            }
-            case "--key", "-kl" -> {
-                if (args.length < 2 || args.length > 3) {
-                    logError("Usage: pit --key <key length> [iteration count]");
-                    return;
-                }
-
-                final int keyLength;
-                try {
-                    keyLength = Integer.parseInt(args[1]);
-                } catch (final NumberFormatException e) {
-                    logError("Invalid key length: " + args[1]);
-                    return;
-                }
-
-                final int iterations = args.length == 3 ? Integer.parseInt(args[2]) : 65536;
-                if (keyLength <= 0 || iterations <= 0) {
-                    logError("Key length and iteration count must be positive integers.");
-                    return;
-                }
-
-                logSuccess("Key length set to " + keyLength + " bits with " + iterations + " iterations.");
-                KeyUtils.ITERATIONS = iterations;
-                KeyUtils.KEY_LENGTH = keyLength;
-            }
-            default -> {
-                logWarning("Unknown command: " + command);
-                logInfo("Use --help or -h for usage information.");
             }
         }
     }
@@ -423,40 +201,290 @@ public final class Pit {
     private static void printHelp() {
         System.out.println(ansi().fgBrightBlue().bold().a("Pit").reset().a(" - https://github.com/FlorianMichael/pit"));
         System.out.println();
-
         logSection("Usage:");
-        logCommand("--help, -h", "", "Show this help dialog");
-
-        logSubsection("To setup your first vault");
-        logCommand("--init, -i", "<name>", "Initialize a new encrypted vault");
-
-        logSubsection("You can later encrypt and decrypt the entire vault...");
-        logCommand("--encrypt, -e", "<folder> <vault>", "Encrypt a folder into a vault");
-        logCommand("--decrypt, -d", "<vault> <folder>", "Decrypt a vault to a folder");
-
-        logSubsection("...or manage individual entries inside the vault using high-level commands:");
-        logCommand("--view, -v", "<vault> <entry>", "View a file/folder inside a vault");
-        logCommand("--remove, -r", "<vault> <entry>", "Remove a file/folder from a vault");
-        logCommand("--rename, -rn", "<vault> <entry> <new name>", "Rename an entry in a vault");
-        logCommand("--edit, -et", "<vault> <entry>", "Edit a file in the vault");
-        logCommand("--create, -c", "<vault> <entry>", "Create a new entry in a vault");
-        logCommand("--add, -a", "<vault> <file>", "Add an external file to the vault");
-        logCommand("--generate, -g", "<vault> <name>", "Generate a credentials entry");
+        logCommand("help, h", "", "Show this help dialog");
+        logCommand("key, kl", "[<key length>] [<iterations>]", "Set the key length for encryption");
+        logCommand("exit, quit", "", "Exit the program");
+        logCommand("decrypt, d", "<folder>", "Decrypt a vault to a folder");
+        logCommand("recrypt, rc", "", "Re-encrypt the vault with a new password");
+        logCommand("view, v", "[<entry>]", "View a file/folder inside a vault");
+        logCommand("remove, r", "<entry>", "Remove a file/folder from a vault");
+        logCommand("rename, rn", "<entry> <new name>", "Rename an entry in a vault");
+        logCommand("edit, et", "<entry>", "Edit a file in the vault");
+        logCommand("create, c", "<entry>", "Create a new entry in a vault");
+        logCommand("add, a", "<file>", "Add an external file to the vault");
+        logCommand("generate, g", "<name>", "Generate a credentials entry");
         System.out.println();
     }
 
-    // ----
+    private static void decrypt(final String[] args) {
+        if (args.length != 1) {
+            logError("Usage: decrypt <folder path>");
+            return;
+        }
 
-    private static String requestPassword() {
-        final String password = new String(System.console().readPassword("Enter master password: "));
-        return password.isEmpty() ? requestPassword() : password;
+        final Path folderPath = Path.of(args[0]);
+        if (Files.exists(folderPath)) {
+            logWarning("Folder already exists: " + folderPath);
+            logInfo("If you want to overwrite it, please delete the existing folder first.");
+            return;
+        }
+
+        final String password = masterPassword();
+
+        try {
+            final Map<String, byte[]> files = FileUtils.decryptVault(vault, password);
+            final Path outputBasePath = folderPath.toAbsolutePath().normalize();
+
+            for (final Map.Entry<String, byte[]> entry : files.entrySet()) {
+                final Path outPath = outputBasePath.resolve(entry.getKey()).normalize();
+                if (!outPath.startsWith(outputBasePath)) {
+                    throw new SecurityException("Invalid path: " + entry.getKey());
+                }
+
+                Files.createDirectories(outPath.getParent());
+                Files.write(outPath, entry.getValue());
+            }
+            logSuccess("File decrypted successfully to: " + folderPath);
+        } catch (final Exception e) {
+            logError("Failed to decrypt file: " + e.getMessage());
+        }
     }
 
-    private static String confirmPassword(final String password) {
+    private static void view(final String[] args) {
+        if (args.length > 1) {
+            logError("Usage: view (folder/file in archive)");
+            return;
+        }
+
+        final String entryPath = args.length == 1 ? args[0].replace("\\", "/") : "";
+        final String password = masterPassword();
+
+        try {
+            final FileInputStream fis = new FileInputStream(vault);
+            final byte[] salt = fis.readNBytes(EncryptUtils.SALT_LENGTH);
+            final byte[] iv = fis.readNBytes(16);
+
+            final SecretKey key = deriveKey(password, salt);
+            final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
+
+            final CipherInputStream cis = new CipherInputStream(fis, cipher);
+            final ZipInputStream zis = new ZipInputStream(cis);
+
+            final ZipWalker.Node root = ZipWalker.buildZipTree(zis);
+
+            final ZipWalker.Node node = ZipWalker.findNode(root, entryPath);
+            if (node == null) {
+                logError("Entry not found: " + entryPath);
+                return;
+            }
+
+            if (node.isDirectory) {
+                logInfo("Contents of folder " + (entryPath.isEmpty() ? "/" : entryPath) + ":");
+                ZipWalker.printTree(node, 0);
+            } else {
+                final byte[] content = FileUtils.decryptEntry(vault, entryPath, password);
+                logInfo("Content of " + entryPath + ":");
+                System.out.println(new String(content));
+            }
+
+            cis.close();
+            zis.close();
+            fis.close();
+        } catch (final Exception e) {
+            logError("Failed to read archive: " + e.getMessage());
+        }
+    }
+
+    private static void remove(final String[] args) {
+        if (args.length < 1 || args.length > 2) {
+            logError("Usage: remove <folder/file in archive>");
+            return;
+        }
+
+        final String confirm = new String(System.console().readPassword("Are you sure you want to remove the entry? Type 'yes' to confirm: "));
+        if (!"yes".equalsIgnoreCase(confirm)) {
+            logSuccess("Removal cancelled.");
+            return;
+        }
+
+        final String entryPath = args[0].replace("\\", "/");
+        final String password = masterPassword();
+
+        try {
+            FileUtils.removeEntry(vault, entryPath, password);
+            logSuccess("Entry removed successfully: " + entryPath);
+        } catch (final Exception e) {
+            logError("Failed to remove entry: " + e.getMessage());
+        }
+    }
+
+    private static void rename(final String[] args) {
+        if (args.length != 2) {
+            logError("Usage: rename <folder/file in archive> <new name>");
+            return;
+        }
+
+        final String oldName = args[0].replace("\\", "/");
+        final String newName = args[1].replace("\\", "/");
+        final String password = masterPassword();
+
+        try {
+            FileUtils.renameEntry(vault, oldName, newName, password);
+            logSuccess("Entry renamed successfully to: " + newName);
+        } catch (final Exception e) {
+            logError("Failed to rename entry: " + e.getMessage());
+        }
+    }
+
+    private static void edit(final String[] args) {
+        if (args.length != 1) {
+            logError("Usage: edit <folder/file in archive>");
+            return;
+        }
+
+        final String entryPath = args[0].replace("\\", "/");
+        final String password = masterPassword();
+
+        try {
+            final byte[] content = FileUtils.decryptEntry(vault, entryPath, password);
+            ConsoleFileEditor.open(new String(content).lines().toList(), updatedLines -> {
+                try {
+                    final byte[] newContent = String.join("\n", updatedLines).getBytes();
+                    FileUtils.editEntry(vault, entryPath, newContent, password);
+                    logSuccess("Entry edited successfully.");
+                } catch (final Exception e) {
+                    logError("Failed to save changes: " + e.getMessage());
+                }
+            });
+        } catch (final Exception e) {
+            logError("Failed to edit entry: " + e.getMessage());
+        }
+    }
+
+    private static void create(final String[] args) {
+        if (args.length != 1) {
+            logError("Usage: create <folder/file name>");
+            return;
+        }
+
+        final String entryName = args[0].replace("\\", "/");
+        final String password = masterPassword();
+
+        try {
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while (!(line = System.console().readLine()).isEmpty()) {
+                sb.append(line).append(System.lineSeparator());
+            }
+            final String content = sb.toString().trim();
+            FileUtils.addEntry(vault, entryName, content.getBytes(), password);
+            logSuccess("Entry created successfully: " + entryName);
+        } catch (final Exception e) {
+            logError("Failed to create entry: " + e.getMessage());
+        }
+    }
+
+    private static void add(final String[] args) {
+        if (args.length != 1) {
+            logError("Usage: add <folder/file path>");
+            return;
+        }
+
+        final String entryPath = args[0].replace("\\", "/");
+        final String password = masterPassword();
+
+        try {
+            final String content = new String(Files.readAllBytes(Path.of(entryPath)));
+            FileUtils.addEntry(vault, entryPath, content.getBytes(), password);
+            logSuccess("Entry added successfully: " + entryPath);
+        } catch (final Exception e) {
+            logError("Failed to add entry: " + e.getMessage());
+        }
+    }
+
+    private static void generate(final String[] args) {
+        if (args.length != 1) {
+            logError("Usage: generate <file name>");
+            return;
+        }
+
+        final String fileName = args[0].replace("\\", "/");
+        final String password = KeyUtils.generateRandomPassword();
+
+        try {
+            FileUtils.addEntry(vault, fileName, password.getBytes(), masterPassword());
+            logSuccess("Generated password: " + password);
+            copyToClipboard(password);
+            logInfo("Password copied to clipboard.");
+        } catch (final Exception e) {
+            logError("Failed to generate password: " + e.getMessage());
+        }
+    }
+
+    private static void recrypt(final String[] args) {
+        if (args.length > 1) {
+            logError("Usage: recrypt");
+            return;
+        }
+
+        final String oldPassword = masterPassword();
+        final String newPassword = confirmPassword();
+
+        try {
+            final Map<String, byte[]> file = FileUtils.decryptVault(vault, oldPassword);
+            FileUtils.encryptVault(file, vault, newPassword);
+            file.clear();
+            logInfo("Vault re-encrypted successfully.");
+        } catch (final Exception e) {
+            logError("Failed to re-encrypt vault: " + e.getMessage());
+        }
+    }
+
+    private static void setKeyLength(final String[] args) {
+        if (args.length < 1 || args.length > 2) {
+            KeyUtils.ITERATIONS = 65536;
+            KeyUtils.KEY_LENGTH = 256;
+            logInfo("Using default key length of 256 bits and 65536 iterations.");
+            return;
+        }
+
+        final int keyLength;
+        try {
+            keyLength = Integer.parseInt(args[0]);
+        } catch (final NumberFormatException e) {
+            logError("Invalid key length: " + args[0]);
+            return;
+        }
+
+        final int iterations = args.length == 2 ? Integer.parseInt(args[1]) : 65536;
+        if (keyLength <= 0 || iterations <= 0) {
+            logError("Key length and iteration count must be positive integers.");
+            return;
+        }
+
+        logSuccess("Key length set to " + keyLength + " bits with " + iterations + " iterations.");
+        KeyUtils.ITERATIONS = iterations;
+        KeyUtils.KEY_LENGTH = keyLength;
+    }
+
+    // 
+
+    private static String masterPassword() {
+        try {
+            return new String(EncryptUtils.decryptBytes(key, RANDOM_STRING));
+        } catch (final Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private static String confirmPassword() {
+        final String password = new String(System.console().readPassword("Enter master password: "));
         final String confirm = new String(System.console().readPassword("Confirm master password: "));
         if (!confirm.equals(password)) {
             logWarning("Passwords do not match. Please try again.");
-            return confirmPassword(requestPassword());
+            return confirmPassword();
         }
 
         return confirm;
