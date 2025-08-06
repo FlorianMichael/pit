@@ -160,7 +160,7 @@ public final class Pit {
 
                 try {
                     final FileInputStream fis = new FileInputStream(filePath);
-                    final byte[] salt = fis.readNBytes(FileUtils.SALT_LENGTH);
+                    final byte[] salt = fis.readNBytes(EncryptUtils.SALT_LENGTH);
                     final byte[] iv = fis.readNBytes(16);
 
                     final SecretKey key = deriveKey(password, salt);

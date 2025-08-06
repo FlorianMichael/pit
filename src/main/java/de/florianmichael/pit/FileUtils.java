@@ -25,7 +25,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.security.SecureRandom;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -41,9 +40,10 @@ import javax.crypto.spec.IvParameterSpec;
 
 import static de.florianmichael.pit.KeyUtils.deriveKey;
 
+/**
+ * {@link EncryptUtils} wrapper around ZIP files.
+ */
 public final class FileUtils {
-
-    public static final int SALT_LENGTH = 16;
 
     /**
      * Encrypts a vault containing multiple files into a single encrypted ZIP file.
@@ -54,7 +54,7 @@ public final class FileUtils {
      * @throws Exception if an error occurs during encryption
      */
     public static void encryptVault(final Map<String, byte[]> files, final File output, final String password) throws Exception {
-        final byte[] salt = new byte[SALT_LENGTH];
+        final byte[] salt = new byte[EncryptUtils.SALT_LENGTH];
         final byte[] iv = new byte[16];
         new SecureRandom().nextBytes(salt);
         new SecureRandom().nextBytes(iv);
@@ -78,6 +78,22 @@ public final class FileUtils {
     }
 
     /**
+     * Writes an encrypted entry to a ZIP output stream.
+     *
+     * @param zos      the ZipOutputStream to write to
+     * @param name     the name of the entry in the ZIP file
+     * @param content  the content of the entry as a byte array
+     * @param password the password used for encryption
+     * @throws Exception if an error occurs during encryption or writing
+     */
+    public static void writeEncryptedZipEntry(final ZipOutputStream zos, String name, final byte[] content, final String password) throws Exception {
+        final ZipEntry zipEntry = new ZipEntry(name);
+        zos.putNextEntry(zipEntry);
+        zos.write(EncryptUtils.encryptBytes(content, password));
+        zos.closeEntry();
+    }
+
+    /**
      * Decrypts a vault from an encrypted ZIP file and returns the files as a map.
      *
      * @param file     the encrypted vault file
@@ -87,7 +103,7 @@ public final class FileUtils {
      */
     public static Map<String, byte[]> decryptVault(final File file, final String password) throws Exception {
         try (final FileInputStream fis = new FileInputStream(file)) {
-            final byte[] salt = fis.readNBytes(SALT_LENGTH);
+            final byte[] salt = fis.readNBytes(EncryptUtils.SALT_LENGTH);
             final byte[] iv = fis.readNBytes(16);
 
             final SecretKey key = deriveKey(password, salt);
@@ -106,7 +122,7 @@ public final class FileUtils {
 
                     final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
                     zis.transferTo(buffer);
-                    result.put(entry.getName(), decryptBytes(buffer.toByteArray(), password));
+                    result.put(entry.getName(), EncryptUtils.decryptBytes(buffer.toByteArray(), password));
                 }
 
                 return result;
@@ -125,7 +141,7 @@ public final class FileUtils {
      */
     public static byte[] decryptEntry(final File vaultFile, final String entryName, final String password) throws Exception {
         try (final FileInputStream fis = new FileInputStream(vaultFile)) {
-            final byte[] salt = fis.readNBytes(SALT_LENGTH);
+            final byte[] salt = fis.readNBytes(EncryptUtils.SALT_LENGTH);
             final byte[] iv = fis.readNBytes(16);
 
             final SecretKey key = deriveKey(password, salt);
@@ -147,7 +163,7 @@ public final class FileUtils {
 
                     final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
                     zis.transferTo(buffer);
-                    return decryptBytes(buffer.toByteArray(), password);
+                    return EncryptUtils.decryptBytes(buffer.toByteArray(), password);
                 }
             }
         }
@@ -155,59 +171,7 @@ public final class FileUtils {
         throw new IOException("Entry not found or not a file: " + entryName);
     }
 
-    /**
-     * Writes an encrypted entry to a ZIP output stream.
-     *
-     * @param zos      the ZipOutputStream to write to
-     * @param name     the name of the entry in the ZIP file
-     * @param content  the content of the entry as a byte array
-     * @param password the password used for encryption
-     * @throws Exception if an error occurs during encryption or writing
-     */
-    public static void writeEncryptedZipEntry(final ZipOutputStream zos, String name, final byte[] content, final String password) throws Exception {
-        final byte[] salt = new byte[SALT_LENGTH];
-        final byte[] iv = new byte[16];
-        new SecureRandom().nextBytes(salt);
-        new SecureRandom().nextBytes(iv);
-
-        final SecretKey key = deriveKey(password, salt);
-        final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        cipher.init(Cipher.ENCRYPT_MODE, key, new IvParameterSpec(iv));
-        final byte[] encryptedData = cipher.doFinal(content);
-
-        final ByteArrayOutputStream stream = new ByteArrayOutputStream();
-        stream.write(salt);
-        stream.write(iv);
-        stream.write(encryptedData);
-
-        final ZipEntry zipEntry = new ZipEntry(name);
-        zos.putNextEntry(zipEntry);
-        zos.write(stream.toByteArray());
-        zos.closeEntry();
-    }
-
-    /**
-     * Decrypts a file that was encrypted with the specified password.
-     *
-     * @param bytes    the encrypted file as a byte array
-     * @param password the password used for decryption
-     * @return the decrypted file content as a byte array
-     * @throws Exception if an error occurs during decryption
-     */
-    private static byte[] decryptBytes(final byte[] bytes, final String password) throws Exception {
-        if (bytes.length < SALT_LENGTH + 16) {
-            throw new IllegalArgumentException("Encrypted entry is too short to be valid.");
-        }
-
-        final byte[] salt = Arrays.copyOfRange(bytes, 0, SALT_LENGTH);
-        final byte[] iv = Arrays.copyOfRange(bytes, SALT_LENGTH, SALT_LENGTH + 16);
-        final byte[] encryptedData = Arrays.copyOfRange(bytes, SALT_LENGTH + 16, bytes.length);
-
-        final SecretKey key = deriveKey(password, salt);
-        final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-        cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
-        return cipher.doFinal(encryptedData);
-    }
+    // ---
 
     /**
      * Adds a new entry to the archive, overriding any existing entry with the same name.
@@ -272,9 +236,10 @@ public final class FileUtils {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 if (entry.getName().equals(oldName)) {
-                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
                     zis.transferTo(buffer);
-                    byte[] decrypted = decryptBytes(buffer.toByteArray(), password);
+
+                    final byte[] decrypted = EncryptUtils.decryptBytes(buffer.toByteArray(), password);
                     writeEncryptedZipEntry(zos, newName, decrypted, password);
                 } else {
                     copyZipEntry(zis, zos, entry);
@@ -298,14 +263,16 @@ public final class FileUtils {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
                 if (entry.getName().equals(entryName)) {
-                    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                    final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
                     zis.transferTo(buffer);
+
                     writeEncryptedZipEntry(zos, entryName, newContent, password);
                     found = true;
                 } else {
                     copyZipEntry(zis, zos, entry);
                 }
             }
+
             if (!found) {
                 throw new IOException("Entry to edit not found: " + entryName);
             }
@@ -328,7 +295,7 @@ public final class FileUtils {
             final FileInputStream fis = new FileInputStream(archive);
             final FileOutputStream fos = new FileOutputStream(tempOutput)
         ) {
-            final byte[] salt = fis.readNBytes(SALT_LENGTH);
+            final byte[] salt = fis.readNBytes(EncryptUtils.SALT_LENGTH);
             final byte[] iv = fis.readNBytes(16);
 
             final SecretKey key = deriveKey(password, salt);
@@ -336,7 +303,7 @@ public final class FileUtils {
             decryptCipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
 
             final Cipher encryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-            final byte[] newSalt = new byte[SALT_LENGTH];
+            final byte[] newSalt = new byte[EncryptUtils.SALT_LENGTH];
             final byte[] newIv = new byte[16];
             new SecureRandom().nextBytes(newSalt);
             new SecureRandom().nextBytes(newIv);
@@ -368,6 +335,13 @@ public final class FileUtils {
     @FunctionalInterface
     private interface ArchiveModifier {
 
+        /**
+         * Applies modifications to the entries in the ZIP input stream and writes them to the ZIP output stream.
+         *
+         * @param zis the ZipInputStream to read entries from
+         * @param zos the ZipOutputStream to write modified entries to
+         * @throws Exception if an error occurs during processing
+         */
         void apply(final ZipInputStream zis, final ZipOutputStream zos) throws Exception;
 
     }
