@@ -26,7 +26,6 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -127,12 +126,23 @@ public final class Pit {
                 }
 
                 final String filePath = args[1];
-                final String folderPath = args[2];
+                if (!Files.exists(Path.of(filePath))) {
+                    logError("File does not exist: " + filePath);
+                    return;
+                }
+
+                final Path folderPath = Path.of(args[2]);
+                if (Files.exists(folderPath)) {
+                    logWarning("Folder already exists: " + folderPath);
+                    logInfo("If you want to overwrite it, please delete the existing folder first.");
+                    return;
+                }
+
                 final String password = requestPassword();
 
                 try {
                     final Map<String, byte[]> files = FileUtils.decryptVault(new File(filePath), password);
-                    final Path outputBasePath = Paths.get(folderPath).toAbsolutePath().normalize();
+                    final Path outputBasePath = folderPath.toAbsolutePath().normalize();
 
                     for (final Map.Entry<String, byte[]> entry : files.entrySet()) {
                         final Path outPath = outputBasePath.resolve(entry.getKey()).normalize();
@@ -155,6 +165,11 @@ public final class Pit {
                 }
 
                 final String filePath = args[1];
+                if (!Files.exists(Path.of(filePath))) {
+                    logError("File does not exist: " + filePath);
+                    return;
+                }
+
                 final String entryPath = args.length > 2 ? args[2].replace("\\", "/") : "";
                 final String password = requestPassword();
 
@@ -207,13 +222,15 @@ public final class Pit {
                 }
 
                 final String filePath = args[1];
-                final String entryPath = args[2].replace("\\", "/");
                 if (!Files.exists(Path.of(filePath))) {
                     logError("File does not exist: " + filePath);
                     return;
                 }
+
+                final String entryPath = args[2].replace("\\", "/");
+                final String password = requestPassword();
+
                 try {
-                    final String password = requestPassword();
                     FileUtils.removeEntry(new File(filePath), entryPath, password);
                     logSuccess("Entry removed successfully: " + entryPath);
                 } catch (final Exception e) {
@@ -234,9 +251,9 @@ public final class Pit {
 
                 final String oldName = args[2].replace("\\", "/");
                 final String newName = args[3].replace("\\", "/");
+                final String password = requestPassword();
 
                 try {
-                    final String password = requestPassword();
                     FileUtils.renameEntry(new File(filePath), oldName, newName, password);
                     logSuccess("Entry renamed successfully to: " + newName);
                 } catch (final Exception e) {
@@ -250,10 +267,15 @@ public final class Pit {
                 }
 
                 final String filePath = args[1];
+                if (!Files.exists(Path.of(filePath))) {
+                    logError("File does not exist: " + filePath);
+                    return;
+                }
+
                 final String entryPath = args[2].replace("\\", "/");
+                final String password = requestPassword();
 
                 try {
-                    final String password = requestPassword();
                     final byte[] content = FileUtils.decryptEntry(new File(filePath), entryPath, password);
                     ConsoleFileEditor.open(new String(content).lines().toList(), updatedLines -> {
                         try {
@@ -281,6 +303,8 @@ public final class Pit {
                 }
 
                 final String entryName = args[2].replace("\\", "/");
+                final String password = requestPassword();
+
                 try {
                     StringBuilder sb = new StringBuilder();
                     String line;
@@ -288,7 +312,6 @@ public final class Pit {
                         sb.append(line).append(System.lineSeparator());
                     }
                     final String content = sb.toString().trim();
-                    final String password = requestPassword();
                     FileUtils.addEntry(new File(filePath), entryName, content.getBytes(), password);
                     logSuccess("Entry created successfully: " + entryName);
                 } catch (final Exception e) {
@@ -302,16 +325,16 @@ public final class Pit {
                 }
 
                 final String filePath = args[1];
-                final String entryPath = args[2].replace("\\", "/");
-
                 if (!Files.exists(Path.of(filePath))) {
                     logError("File does not exist: " + filePath);
                     return;
                 }
 
+                final String entryPath = args[2].replace("\\", "/");
+                final String password = requestPassword();
+
                 try {
                     final String content = new String(Files.readAllBytes(Path.of(entryPath)));
-                    final String password = requestPassword();
                     FileUtils.addEntry(new File(filePath), entryPath, content.getBytes(), password);
                     logSuccess("Entry added successfully: " + entryPath);
                 } catch (final Exception e) {
@@ -331,8 +354,9 @@ public final class Pit {
                 }
 
                 final String fileName = args[2].replace("\\", "/");
+                final String password = KeyUtils.generateRandomPassword();
+
                 try {
-                    final String password = KeyUtils.generateRandomPassword();
                     FileUtils.addEntry(new File(filePath), fileName, password.getBytes(), requestPassword());
                     logSuccess("Generated password: " + password);
                     copyToClipboard(password);
@@ -353,9 +377,10 @@ public final class Pit {
                     return;
                 }
 
+                final String oldPassword = requestPassword();
+                final String newPassword = confirmPassword(requestPassword());
+
                 try {
-                    final String oldPassword = requestPassword();
-                    final String newPassword = confirmPassword(requestPassword());
                     final Map<String, byte[]> vault = FileUtils.decryptVault(new File(filePath), oldPassword);
                     FileUtils.encryptVault(vault, new File(filePath), newPassword);
                     vault.clear();
