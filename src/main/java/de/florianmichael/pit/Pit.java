@@ -23,10 +23,13 @@ import java.awt.datatransfer.StringSelection;
 import java.io.Console;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.zip.ZipInputStream;
 import javax.crypto.Cipher;
 import javax.crypto.CipherInputStream;
@@ -108,7 +111,10 @@ public final class Pit {
                 final String password = confirmPassword(requestPassword());
 
                 try {
-                    FileUtils.encryptFolder(folderPath, filePath, password);
+                    final File folder = new File(folderPath);
+                    final Map<String, byte[]> files = new HashMap<>();
+                    loadFilesRecursively(folder, folder.getAbsolutePath(), files);
+                    FileUtils.encryptVault(files, new File(filePath), password);
                     logSuccess("File encrypted successfully: " + filePath);
                 } catch (final Exception e) {
                     logError("Failed to encrypt file: " + e.getMessage());
@@ -125,7 +131,18 @@ public final class Pit {
                 final String password = requestPassword();
 
                 try {
-                    FileUtils.decryptToFolder(filePath, folderPath, password);
+                    final Map<String, byte[]> files = FileUtils.decryptVault(new File(filePath), password);
+                    final Path outputBasePath = Paths.get(folderPath).toAbsolutePath().normalize();
+
+                    for (final Map.Entry<String, byte[]> entry : files.entrySet()) {
+                        final Path outPath = outputBasePath.resolve(entry.getKey()).normalize();
+                        if (!outPath.startsWith(outputBasePath)) {
+                            throw new SecurityException("Invalid path: " + entry.getKey());
+                        }
+
+                        Files.createDirectories(outPath.getParent());
+                        Files.write(outPath, entry.getValue());
+                    }
                     logSuccess("File decrypted successfully to: " + folderPath);
                 } catch (final Exception e) {
                     logError("Failed to decrypt file: " + e.getMessage());
@@ -235,15 +252,7 @@ public final class Pit {
                 final String filePath = args[1];
                 final String entryPath = args[2].replace("\\", "/");
 
-                try (final ZipInputStream zis = new ZipInputStream(new FileInputStream(filePath))) {
-                    final ZipWalker.Node root = ZipWalker.buildZipTree(zis);
-                    final ZipWalker.Node node = ZipWalker.findNode(root, entryPath);
-
-                    if (node == null || node.isDirectory) {
-                        logError("Entry not found or is a directory: " + entryPath);
-                        return;
-                    }
-
+                try {
                     final String password = requestPassword();
                     final byte[] content = FileUtils.decryptEntry(new File(filePath), entryPath, password);
                     ConsoleFileEditor.open(new String(content).lines().toList(), updatedLines -> {
@@ -433,6 +442,17 @@ public final class Pit {
             Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
         } catch (Exception e) {
             logError("Failed to copy password to clipboard.");
+        }
+    }
+
+    private static void loadFilesRecursively(final File base, final String rootPath, final Map<String, byte[]> map) throws IOException {
+        if (base.isDirectory()) {
+            for (File file : Objects.requireNonNull(base.listFiles())) {
+                loadFilesRecursively(file, rootPath, map);
+            }
+        } else {
+            String relativePath = base.getAbsolutePath().substring(rootPath.length() + 1).replace("\\", "/");
+            map.put(relativePath, Files.readAllBytes(base.toPath()));
         }
     }
 

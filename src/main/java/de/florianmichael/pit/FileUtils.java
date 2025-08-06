@@ -24,14 +24,11 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -140,8 +137,13 @@ public final class FileUtils {
 
                 ZipEntry entry;
                 while ((entry = zis.getNextEntry()) != null) {
-                    if (entry.isDirectory()) continue;
-                    if (!entry.getName().equals(entryName)) continue;
+                    if (entry.isDirectory()) {
+                        continue;
+                    }
+
+                    if (!entry.getName().equals(entryName)) {
+                        continue;
+                    }
 
                     final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
                     zis.transferTo(buffer);
@@ -150,7 +152,7 @@ public final class FileUtils {
             }
         }
 
-        throw new IOException("Entry not found: " + entryName);
+        throw new IOException("Entry not found or not a file: " + entryName);
     }
 
     /**
@@ -207,6 +209,15 @@ public final class FileUtils {
         return cipher.doFinal(encryptedData);
     }
 
+    /**
+     * Adds a new entry to the archive, overriding any existing entry with the same name.
+     *
+     * @param archive   the archive file to modify
+     * @param entryName the name of the entry to add
+     * @param content   the content of the entry as a byte array
+     * @param password  the password used for encryption
+     * @throws Exception if an error occurs during processing
+     */
     public static void addEntry(File archive, String entryName, byte[] content, String password) throws Exception {
         processArchiveEntryModification(archive, password, (zis, zos) -> {
             Set<String> written = new HashSet<>();
@@ -226,6 +237,14 @@ public final class FileUtils {
         });
     }
 
+    /**
+     * Removes an entry from the archive by skipping it during the copy process.
+     *
+     * @param archive   the archive file to modify
+     * @param entryName the name of the entry to remove
+     * @param password  the password used for encryption
+     * @throws Exception if an error occurs during processing
+     */
     public static void removeEntry(final File archive, final String entryName, final String password) throws Exception {
         processArchiveEntryModification(archive, password, (zis, zos) -> {
             ZipEntry entry;
@@ -239,6 +258,15 @@ public final class FileUtils {
         });
     }
 
+    /**
+     * Renames an entry in the archive by copying its content to a new entry with the new name
+     *
+     * @param archive  the archive file to modify
+     * @param oldName  the name of the entry to rename
+     * @param newName  the new name for the entry
+     * @param password the password used for encryption
+     * @throws Exception if an error occurs during processing
+     */
     public static void renameEntry(final File archive, final String oldName, final String newName, final String password) throws Exception {
         processArchiveEntryModification(archive, password, (zis, zos) -> {
             ZipEntry entry;
@@ -255,6 +283,15 @@ public final class FileUtils {
         });
     }
 
+    /**
+     * Edits an entry in the archive by replacing its content with new content.
+     *
+     * @param archive    the archive file to modify
+     * @param entryName  the name of the entry to edit
+     * @param newContent the new content to write to the entry
+     * @param password   the password used for encryption
+     * @throws Exception if an error occurs during processing
+     */
     public static void editEntry(final File archive, final String entryName, final byte[] newContent, final String password) throws Exception {
         processArchiveEntryModification(archive, password, (zis, zos) -> {
             boolean found = false;
@@ -326,61 +363,6 @@ public final class FileUtils {
         zos.putNextEntry(new ZipEntry(entry.getName()));
         zis.transferTo(zos);
         zos.closeEntry();
-    }
-
-    /**
-     * Encrypts a folder and its contents into a single encrypted vault file.
-     *
-     * @param folderPath     the path to the folder to encrypt
-     * @param outputFilePath the path to the output encrypted vault file
-     * @param password       the password used for encryption
-     * @throws Exception if an error occurs during encryption
-     */
-    public static void encryptFolder(String folderPath, String outputFilePath, String password) throws Exception {
-        File folder = new File(folderPath);
-        if (!folder.exists() || !folder.isDirectory()) {
-            throw new IllegalArgumentException("Invalid folder: " + folderPath);
-        }
-
-        Map<String, byte[]> files = new HashMap<>();
-        loadFilesRecursively(folder, folder.getAbsolutePath(), files);
-        encryptVault(files, new File(outputFilePath), password);
-    }
-
-    // ----------------------- Optional Folder I/O -----------------------
-
-    /**
-     * Decrypts an encrypted vault and writes the files to a specified output folder.
-     *
-     * @param inputFilePath    the path to the encrypted vault file
-     * @param outputFolderPath the path to the output folder where files will be written
-     * @param password         the password used for decryption
-     * @throws Exception if an error occurs during decryption or writing files
-     */
-    public static void decryptToFolder(String inputFilePath, String outputFolderPath, String password) throws Exception {
-        Map<String, byte[]> files = decryptVault(new File(inputFilePath), password);
-        Path outputBasePath = Paths.get(outputFolderPath).toAbsolutePath().normalize();
-
-        for (Map.Entry<String, byte[]> entry : files.entrySet()) {
-            Path outPath = outputBasePath.resolve(entry.getKey()).normalize();
-            if (!outPath.startsWith(outputBasePath)) {
-                throw new SecurityException("Invalid path: " + entry.getKey());
-            }
-
-            Files.createDirectories(outPath.getParent());
-            Files.write(outPath, entry.getValue());
-        }
-    }
-
-    private static void loadFilesRecursively(File base, String rootPath, Map<String, byte[]> map) throws IOException {
-        if (base.isDirectory()) {
-            for (File file : Objects.requireNonNull(base.listFiles())) {
-                loadFilesRecursively(file, rootPath, map);
-            }
-        } else {
-            String relativePath = base.getAbsolutePath().substring(rootPath.length() + 1).replace("\\", "/");
-            map.put(relativePath, Files.readAllBytes(base.toPath()));
-        }
     }
 
     @FunctionalInterface
