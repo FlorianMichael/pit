@@ -80,7 +80,7 @@ public final class Pit {
         switch (action) {
             case "init", "i" -> init(args);
             case "encrypt", "e" -> encrypt(args);
-            case "session", "s" -> startSession(args);
+            case "session", "s" -> session(args);
         }
     }
 
@@ -139,7 +139,7 @@ public final class Pit {
         }
     }
 
-    private static void startSession(final String[] programArgs) {
+    private static void session(final String[] programArgs) {
         vault = new File(programArgs[0]);
         if (!vault.exists()) {
             logError("Vault file does not exist: " + vault);
@@ -162,17 +162,18 @@ public final class Pit {
             throw new RuntimeException(e);
         }
 
-        printHelp();
+        help();
 
         final Scanner scanner = new Scanner(System.in);
 
         while (true) {
+            System.out.print(ansi().fgBrightBlue().bold().a("@" + vault.getName()).reset() + " > ");
             final String[] input = scanner.nextLine().split(" ");
 
             final String command = input.length > 0 ? input[0].toLowerCase() : "";
             final String[] args = Arrays.copyOfRange(input, 1, input.length);
             switch (command) {
-                case "help", "h" -> printHelp();
+                case "help", "h" -> help();
                 case "init", "i" -> init(args);
                 case "encrypt", "e" -> encrypt(args);
                 case "decrypt", "d" -> decrypt(args);
@@ -198,7 +199,7 @@ public final class Pit {
         }
     }
 
-    private static void printHelp() {
+    private static void help() {
         System.out.println(ansi().fgBrightBlue().bold().a("Pit").reset().a(" - https://github.com/FlorianMichael/pit"));
         System.out.println();
         logSection("Usage:");

@@ -10,13 +10,19 @@ into compressed data object files which can only be accessed again using the mas
 Set up your vault using 
 
 ``
-java -jar pit.jar --init passwords
+java -jar pit.jar init passwords
 ``
+
+``
+java -jar pit.jar session passwords
+``
+
+![Session](/.github/media/session.png)
 
 Add your first identity to it:
 
 ``
-java -jar pit.jar --generate passwords google
+generate google
 ``
 
 This will return a random generated password to be then used on the website.
@@ -24,7 +30,11 @@ This will return a random generated password to be then used on the website.
 View again by:
 
 ``
-java -jar pit.jar --view passwords google
+view google
+``
+
+``
+exit
 ``
 
 ## Contact
