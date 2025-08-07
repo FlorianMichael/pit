@@ -24,6 +24,18 @@ import static org.fusesource.jansi.Ansi.ansi;
 
 public final class LogUtils {
 
+    public static void logAsciiArt() {
+        System.out.println("""
+             ____        ______      ______  \s
+            /\\  _`\\     /\\__  _\\    /\\__  _\\ \s
+            \\ \\ \\L\\ \\   \\/_/\\ \\/    \\/_/\\ \\/ \s
+             \\ \\ ,__/      \\ \\ \\       \\ \\ \\ \s
+              \\ \\ \\/        \\_\\ \\__     \\ \\ \\\s
+               \\ \\_\\        /\\_____\\     \\ \\_\\
+                \\/_/        \\/_____/      \\/_/
+            """);
+    }
+
     public static void logInfo(final String msg) {
         System.out.println(ansi().fgCyan().a(msg).reset());
     }

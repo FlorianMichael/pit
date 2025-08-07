@@ -59,6 +59,8 @@ public final class Pit {
         AnsiConsole.systemInstall();
         Runtime.getRuntime().addShutdownHook(new Thread(AnsiConsole::systemUninstall));
 
+        LogUtils.logAsciiArt();
+
         final Console console = System.console();
         if (console == null) {
             logError("Pit requires a console to run. Please run it in a terminal.");
@@ -146,7 +148,13 @@ public final class Pit {
             return;
         }
 
-        final String password = new String(System.console().readPassword("Enter master password: "));
+        final char[] bytes = System.console().readPassword("Enter master password: ");
+        if (bytes == null) {
+            logError("No master password provided. Please try again.");
+            return;
+        }
+
+        final String password = new String(bytes);
         if (password.isEmpty()) {
             logError("Master password cannot be empty. Please try again.");
             return;
@@ -168,7 +176,12 @@ public final class Pit {
 
         while (true) {
             System.out.print(ansi().fgBrightBlue().bold().a("@" + vault.getName()).reset() + " > ");
-            final String[] input = scanner.nextLine().split(" ");
+            final String[] input;
+            try {
+                input = scanner.nextLine().trim().split("\\s+");
+            } catch (final Exception e) {
+                break;
+            }
 
             final String command = input.length > 0 ? input[0].toLowerCase() : "";
             final String[] args = Arrays.copyOfRange(input, 1, input.length);
@@ -465,9 +478,9 @@ public final class Pit {
             return;
         }
 
-        logSuccess("Key length set to " + keyLength + " bits with " + iterations + " iterations.");
         KeyUtils.ITERATIONS = iterations;
         KeyUtils.KEY_LENGTH = keyLength;
+        logSuccess("Key length set to " + keyLength + " bits with " + iterations + " iterations.");
     }
 
     // 
