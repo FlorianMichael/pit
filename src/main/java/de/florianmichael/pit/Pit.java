@@ -73,7 +73,7 @@ public final class Pit {
         switch (action) {
             case "init", "i" -> init(args);
             case "encrypt", "e" -> encrypt(args);
-            case "session", "s" -> session(args);
+            case "session", "s" -> session(args, null);
         }
     }
 
@@ -95,6 +95,8 @@ public final class Pit {
         try {
             FileUtils.encryptVault(new HashMap<>(), new File(filePath), password);
             logSuccess("Vault initialized successfully: " + filePath);
+
+            session(args, password);
         } catch (final Exception e) {
             logError("Failed to initialize vault: " + e.getMessage());
         }
@@ -132,23 +134,25 @@ public final class Pit {
         }
     }
 
-    private static void session(final String[] programArgs) {
+    private static void session(final String[] programArgs, String password) {
         vault = new File(programArgs[0]);
         if (!vault.exists()) {
             logError("Vault file does not exist: " + vault);
             return;
         }
 
-        final char[] bytes = System.console().readPassword("Enter master password: ");
-        if (bytes == null) {
-            logError("No master password provided. Please try again.");
-            return;
-        }
+        if (password == null) {
+            final char[] bytes = System.console().readPassword("Enter master password: ");
+            if (bytes == null) {
+                logError("No master password provided. Please try again.");
+                return;
+            }
 
-        final String password = new String(bytes);
-        if (password.isEmpty()) {
-            logError("Master password cannot be empty. Please try again.");
-            return;
+            password = new String(bytes);
+            if (password.isEmpty()) {
+                logError("Master password cannot be empty. Please try again.");
+                return;
+            }
         }
 
         final ZipWalker.Node node = ZipWalker.getNode(vault, password, "");
