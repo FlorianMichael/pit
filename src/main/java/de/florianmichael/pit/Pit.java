@@ -223,9 +223,9 @@ public final class Pit {
         logCommand("recrypt, rc", "", "Re-encrypt the vault with a new password");
         logCommand("view, v", "[<entry>]", "View a file/folder inside a vault");
         logCommand("remove, r", "<entry>", "Remove a file/folder from a vault");
-        logCommand("rename, rn", "<entry> <new name>", "Rename an entry in a vault");
+        logCommand("rename, rn", "<entry> <name>", "Rename an entry in a vault");
         logCommand("edit, et", "<entry>", "Edit a file in the vault");
-        logCommand("create, c", "<entry>", "Create a new entry in a vault");
+        logCommand("create, c", "<name>", "Create a new entry in a vault");
         logCommand("add, a", "<file>", "Add an external file to the vault");
         logCommand("generate, g", "<name>", "Generate a credentials entry");
         System.out.println();
@@ -233,7 +233,7 @@ public final class Pit {
 
     private static void decrypt(final String[] args) {
         if (args.length != 1) {
-            logError("Usage: decrypt <folder path>");
+            logError("Usage: decrypt <folder>");
             return;
         }
 
@@ -267,7 +267,7 @@ public final class Pit {
 
     private static void view(final String[] args) {
         if (args.length > 1) {
-            logError("Usage: view (folder/file in archive)");
+            logError("Usage: view [<entry>]");
             return;
         }
 
@@ -297,7 +297,7 @@ public final class Pit {
 
     private static void remove(final String[] args) {
         if (args.length < 1 || args.length > 2) {
-            logError("Usage: remove <folder/file in archive>");
+            logError("Usage: remove <entry>");
             return;
         }
 
@@ -320,7 +320,7 @@ public final class Pit {
 
     private static void rename(final String[] args) {
         if (args.length != 2) {
-            logError("Usage: rename <folder/file in archive> <new name>");
+            logError("Usage: rename <entry> <name>");
             return;
         }
 
@@ -338,7 +338,7 @@ public final class Pit {
 
     private static void edit(final String[] args) {
         if (args.length != 1) {
-            logError("Usage: edit <folder/file in archive>");
+            logError("Usage: edit <entry>");
             return;
         }
 
@@ -363,7 +363,7 @@ public final class Pit {
 
     private static void create(final String[] args) {
         if (args.length != 1) {
-            logError("Usage: create <folder/file name>");
+            logError("Usage: create <name>");
             return;
         }
 
@@ -386,7 +386,7 @@ public final class Pit {
 
     private static void add(final String[] args) {
         if (args.length != 1) {
-            logError("Usage: add <folder/file path>");
+            logError("Usage: add <file>");
             return;
         }
 
@@ -404,7 +404,7 @@ public final class Pit {
 
     private static void generate(final String[] args) {
         if (args.length != 1) {
-            logError("Usage: generate <file name>");
+            logError("Usage: generate <name>");
             return;
         }
 
