@@ -18,6 +18,8 @@
 
 package de.florianmichael.pit;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -26,10 +28,58 @@ import java.util.Map;
 import java.util.TreeMap;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.IvParameterSpec;
+
+import static de.florianmichael.pit.KeyUtils.deriveKey;
+import static de.florianmichael.pit.LogUtils.logError;
 
 public final class ZipWalker {
 
-    public static Node buildZipTree(final ZipInputStream zis) throws IOException {
+    public static Node getNode(final File file, final String password, final String entryPath) {
+        try {
+            final FileInputStream fis = new FileInputStream(file);
+            final byte[] salt = fis.readNBytes(EncryptUtils.SALT_LENGTH);
+            final byte[] iv = fis.readNBytes(16);
+
+            final SecretKey key = deriveKey(password, salt);
+            final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
+
+            final CipherInputStream cis = new CipherInputStream(fis, cipher);
+            final ZipInputStream zis = new ZipInputStream(cis);
+
+            final Node root = buildZipTree(zis);
+            final Node node = findNode(root, entryPath);
+
+            cis.close();
+            zis.close();
+            fis.close();
+
+            return node;
+        } catch (final Exception e) {
+            logError("Failed to read archive: " + e.getMessage());
+            return null;
+        }
+    }
+
+    public static void printNodeTree(final Node node, final int indent) {
+        if (!node.name.isEmpty()) {
+            System.out.println("    ".repeat(indent) + node.name);
+        }
+
+        final List<Node> sorted = new ArrayList<>(node.children.values());
+        sorted.sort(Comparator
+            .comparing((Node n) -> !n.isDirectory)
+            .thenComparing(n -> n.name.toLowerCase()));
+        for (Node child : sorted) {
+            printNodeTree(child, indent + 1);
+        }
+    }
+
+    private static Node buildZipTree(final ZipInputStream zis) throws IOException {
         final Node root = new Node("", true);
         ZipEntry entry;
 
@@ -51,21 +101,7 @@ public final class ZipWalker {
         return root;
     }
 
-    public static void printTree(final Node node, final int indent) {
-        if (!node.name.isEmpty()) {
-            System.out.println("    ".repeat(indent) + node.name);
-        }
-
-        final List<Node> sorted = new ArrayList<>(node.children.values());
-        sorted.sort(Comparator
-            .comparing((Node n) -> !n.isDirectory)
-            .thenComparing(n -> n.name.toLowerCase()));
-        for (Node child : sorted) {
-            printTree(child, indent + 1);
-        }
-    }
-
-    public static Node findNode(final Node root, final String path) {
+    private static Node findNode(final Node root, final String path) {
         if (path == null || path.isEmpty()) {
             return root;
         }

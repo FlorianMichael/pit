@@ -22,7 +22,6 @@ import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.io.Console;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,14 +31,8 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Scanner;
-import java.util.zip.ZipInputStream;
-import javax.crypto.Cipher;
-import javax.crypto.CipherInputStream;
-import javax.crypto.SecretKey;
-import javax.crypto.spec.IvParameterSpec;
 import org.fusesource.jansi.AnsiConsole;
 
-import static de.florianmichael.pit.KeyUtils.deriveKey;
 import static de.florianmichael.pit.LogUtils.logCommand;
 import static de.florianmichael.pit.LogUtils.logError;
 import static de.florianmichael.pit.LogUtils.logInfo;
@@ -160,6 +153,11 @@ public final class Pit {
             return;
         }
 
+        final ZipWalker.Node node = ZipWalker.getNode(vault, password, "");
+        if (node == null) {
+            return;
+        }
+
         try {
             final byte[] randomBytes = new byte[16];
             new SecureRandom().nextBytes(randomBytes);
@@ -276,38 +274,22 @@ public final class Pit {
         final String entryPath = args.length == 1 ? args[0].replace("\\", "/") : "";
         final String password = masterPassword();
 
+        final ZipWalker.Node node = ZipWalker.getNode(vault, password, entryPath);
+        if (node == null) {
+            logError("Entry not found: " + entryPath);
+            return;
+        }
+
+        if (node.isDirectory) {
+            logInfo("Contents of folder " + (entryPath.isEmpty() ? "/" : entryPath) + ":");
+            ZipWalker.printNodeTree(node, 0);
+            return;
+        }
+
         try {
-            final FileInputStream fis = new FileInputStream(vault);
-            final byte[] salt = fis.readNBytes(EncryptUtils.SALT_LENGTH);
-            final byte[] iv = fis.readNBytes(16);
-
-            final SecretKey key = deriveKey(password, salt);
-            final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-            cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
-
-            final CipherInputStream cis = new CipherInputStream(fis, cipher);
-            final ZipInputStream zis = new ZipInputStream(cis);
-
-            final ZipWalker.Node root = ZipWalker.buildZipTree(zis);
-
-            final ZipWalker.Node node = ZipWalker.findNode(root, entryPath);
-            if (node == null) {
-                logError("Entry not found: " + entryPath);
-                return;
-            }
-
-            if (node.isDirectory) {
-                logInfo("Contents of folder " + (entryPath.isEmpty() ? "/" : entryPath) + ":");
-                ZipWalker.printTree(node, 0);
-            } else {
-                final byte[] content = FileUtils.decryptEntry(vault, entryPath, password);
-                logInfo("Content of " + entryPath + ":");
-                System.out.println(new String(content));
-            }
-
-            cis.close();
-            zis.close();
-            fis.close();
+            final byte[] content = FileUtils.decryptEntry(vault, entryPath, password);
+            logInfo("Content of " + entryPath + ":");
+            System.out.println(new String(content));
         } catch (final Exception e) {
             logError("Failed to read archive: " + e.getMessage());
         }
