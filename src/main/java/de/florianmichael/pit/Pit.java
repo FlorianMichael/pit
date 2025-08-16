@@ -61,8 +61,6 @@ public final class Pit {
         }
 
         if (programArgs.length < 2) {
-            System.out.println(ansi().fgBrightBlue().bold().a("Pit").reset().a(" - https://github.com/FlorianMichael/pit"));
-            System.out.println();
             logSection("Usage:");
             logCommand("init, i", "<name>", "Initialize a new encrypted vault");
             logCommand("encrypt, e", "<folder> <vault>", "Encrypt a folder into a vault");
@@ -173,7 +171,7 @@ public final class Pit {
         final Scanner scanner = new Scanner(System.in);
 
         while (true) {
-            System.out.print(ansi().fgBrightBlue().bold().a("@" + vault.getName()).reset() + " > ");
+            System.out.print(ansi().fgBrightBlue().bold().a(vault.getName()).reset() + " > ");
             final String[] input;
             try {
                 input = scanner.nextLine().trim().split("\\s+");
@@ -212,8 +210,6 @@ public final class Pit {
     }
 
     private static void help() {
-        System.out.println(ansi().fgBrightBlue().bold().a("Pit").reset().a(" - https://github.com/FlorianMichael/pit"));
-        System.out.println();
         logSection("Usage:");
         logCommand("help, h", "", "Show this help dialog");
         logCommand("key, kl", "[<key length>] [<iterations>]", "Set the key length for encryption");

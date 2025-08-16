@@ -34,6 +34,8 @@ public final class LogUtils {
                \\ \\_\\        /\\_____\\     \\ \\_\\
                 \\/_/        \\/_____/      \\/_/
             """);
+        System.out.println("https://github.com/FlorianMichael/pit");
+        System.out.println();
     }
 
     public static void logInfo(final String msg) {
