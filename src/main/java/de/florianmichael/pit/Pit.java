@@ -199,6 +199,7 @@ public final class Pit {
                 case "generate", "g" -> generate(args);
                 case "recrypt", "rc" -> recrypt(args);
                 case "key", "kl" -> setKeyLength(args);
+                case "clear", "cls" -> clearConsole();
                 case "exit", "quit" -> {
                     logInfo("Exiting pit. Goodbye!");
                     System.exit(0);
@@ -219,6 +220,7 @@ public final class Pit {
         logCommand("help, h", "", "Show this help dialog");
         logCommand("key, kl", "[<key length>] [<iterations>]", "Set the key length for encryption");
         logCommand("exit, quit", "", "Exit the program");
+        logCommand("clear, cls", "", "Clear the console & clipboard");
         logCommand("decrypt, d", "<folder>", "Decrypt a vault to a folder");
         logCommand("recrypt, rc", "", "Re-encrypt the vault with a new password");
         logCommand("view, v", "[<entry>]", "View a file/folder inside a vault");
@@ -481,6 +483,22 @@ public final class Pit {
         KeyUtils.ITERATIONS = iterations;
         KeyUtils.KEY_LENGTH = keyLength;
         logSuccess("Key length set to " + keyLength + " bits with " + iterations + " iterations.");
+    }
+
+    private static void clearConsole() {
+        copyToClipboard("");
+
+        final String os = System.getProperty("os.name");
+
+        try {
+            if (os.contains("Windows")) {
+                new ProcessBuilder("cmd", "/c", "cls").inheritIO().start().waitFor();
+            } else {
+                new ProcessBuilder("clear").inheritIO().start().waitFor();
+            }
+        } catch (final IOException | InterruptedException e) {
+            logError("Failed to clear console: " + e.getMessage());
+        }
     }
 
     // 
