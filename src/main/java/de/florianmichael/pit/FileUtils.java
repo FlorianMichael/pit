@@ -25,10 +25,14 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.security.SecureRandom;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -39,6 +43,7 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.IvParameterSpec;
 
 import static de.florianmichael.pit.KeyUtils.deriveKey;
+import static de.florianmichael.pit.LogUtils.logError;
 
 /**
  * {@link EncryptUtils} wrapper around ZIP files.
@@ -332,6 +337,103 @@ public final class FileUtils {
         zos.closeEntry();
     }
 
+    /**
+     * Retrieves a specific entry node from an encrypted ZIP archive.
+     *
+     * @param archive   the encrypted ZIP archive file
+     * @param password  the password used for decryption
+     * @param entryPath the path of the entry to retrieve
+     * @return the EntryNode representing the specified entry, or null if not found or an error occurs
+     */
+    public static EntryNode getEntryNode(final File archive, final String password, final String entryPath) {
+        try {
+            final FileInputStream fis = new FileInputStream(archive);
+            final byte[] salt = fis.readNBytes(EncryptUtils.SALT_LENGTH);
+            final byte[] iv = fis.readNBytes(16);
+
+            final SecretKey key = deriveKey(password, salt);
+            final Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.DECRYPT_MODE, key, new IvParameterSpec(iv));
+
+            final CipherInputStream cis = new CipherInputStream(fis, cipher);
+            final ZipInputStream zis = new ZipInputStream(cis);
+
+            final EntryNode root = buildZipTree(zis);
+            final EntryNode entryNode = findNode(root, entryPath);
+
+            cis.close();
+            zis.close();
+            fis.close();
+
+            return entryNode;
+        } catch (final Exception e) {
+            logError("Failed to read archive: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Prints the entry tree of a ZIP archive to the console.
+     *
+     * @param entryNode the root node of the entry tree
+     * @param indent    the current indentation level (used for recursive printing)
+     */
+    public static void printEntryTree(final EntryNode entryNode, final int indent) {
+        if (!entryNode.name.isEmpty()) {
+            System.out.println("    ".repeat(indent) + entryNode.name);
+        }
+
+        final List<EntryNode> sorted = new ArrayList<>(entryNode.children.values());
+        sorted.sort(Comparator
+            .comparing((EntryNode n) -> !n.isDirectory)
+            .thenComparing(n -> n.name.toLowerCase()));
+        for (EntryNode child : sorted) {
+            printEntryTree(child, indent + 1);
+        }
+    }
+
+    private static EntryNode buildZipTree(final ZipInputStream zis) throws IOException {
+        final EntryNode root = new EntryNode("", true);
+        ZipEntry entry;
+
+        while ((entry = zis.getNextEntry()) != null) {
+            String[] parts = entry.getName().split("/");
+            EntryNode current = root;
+
+            for (int i = 0; i < parts.length; i++) {
+                String part = parts[i];
+                boolean isDir = (i < parts.length - 1) || entry.isDirectory();
+
+                current.children.putIfAbsent(part, new EntryNode(part, isDir));
+                current = current.children.get(part);
+            }
+
+            zis.closeEntry();
+        }
+
+        return root;
+    }
+
+    private static EntryNode findNode(final EntryNode root, final String path) {
+        if (path == null || path.isEmpty()) {
+            return root;
+        }
+
+        final String[] parts = path.split("/");
+        EntryNode current = root;
+        for (final String part : parts) {
+            if (part.isEmpty()) {
+                continue;
+            }
+
+            current = current.children.get(part);
+            if (current == null) {
+                return null;
+            }
+        }
+        return current;
+    }
+
     @FunctionalInterface
     private interface ArchiveModifier {
 
@@ -343,6 +445,19 @@ public final class FileUtils {
          * @throws Exception if an error occurs during processing
          */
         void apply(final ZipInputStream zis, final ZipOutputStream zos) throws Exception;
+
+    }
+
+    public static class EntryNode {
+
+        final String name;
+        final boolean isDirectory;
+        final Map<String, EntryNode> children = new TreeMap<>();
+
+        EntryNode(String name, boolean isDirectory) {
+            this.name = name;
+            this.isDirectory = isDirectory;
+        }
 
     }
 

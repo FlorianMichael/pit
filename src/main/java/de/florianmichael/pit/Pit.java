@@ -154,8 +154,8 @@ public final class Pit {
                 return;
             }
 
-            final ZipWalker.Node node = ZipWalker.getNode(vault, password, "");
-            if (node == null) {
+            final FileUtils.EntryNode entryNode = FileUtils.getEntryNode(vault, password, "");
+            if (entryNode == null) {
                 return;
             }
         }
@@ -274,15 +274,15 @@ public final class Pit {
         final String entryPath = args.length == 1 ? args[0].replace("\\", "/") : "";
         final String password = masterPassword();
 
-        final ZipWalker.Node node = ZipWalker.getNode(vault, password, entryPath);
-        if (node == null) {
+        final FileUtils.EntryNode entryNode = FileUtils.getEntryNode(vault, password, entryPath);
+        if (entryNode == null) {
             logError("Entry not found: " + entryPath);
             return;
         }
 
-        if (node.isDirectory) {
+        if (entryNode.isDirectory) {
             logInfo("Contents of folder " + (entryPath.isEmpty() ? "/" : entryPath) + ":");
-            ZipWalker.printNodeTree(node, 0);
+            FileUtils.printEntryTree(entryNode, 0);
             return;
         }
 
