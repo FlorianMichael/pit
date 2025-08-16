@@ -13,10 +13,6 @@ Set up your vault using
 java -jar pit.jar init passwords
 ``
 
-``
-java -jar pit.jar session passwords
-``
-
 ![Session](/.github/media/session.png)
 
 Add your first identity to it:
@@ -27,7 +23,19 @@ generate google
 
 This will return a random generated password to be then used on the website.
 
+To quit:
+
+``
+exit
+``
+
+----
+
 View again by:
+
+``
+java -jar pit.jar session passwords
+``
 
 ``
 view google
