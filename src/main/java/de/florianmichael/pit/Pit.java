@@ -153,11 +153,11 @@ public final class Pit {
                 logError("Master password cannot be empty. Please try again.");
                 return;
             }
-        }
 
-        final ZipWalker.Node node = ZipWalker.getNode(vault, password, "");
-        if (node == null) {
-            return;
+            final ZipWalker.Node node = ZipWalker.getNode(vault, password, "");
+            if (node == null) {
+                return;
+            }
         }
 
         try {
