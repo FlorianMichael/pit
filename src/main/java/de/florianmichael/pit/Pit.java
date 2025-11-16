@@ -197,6 +197,8 @@ public final class Pit {
                 case "create", "c" -> create(args);
                 case "add", "a" -> add(args);
                 case "generate", "g" -> generate(args);
+                case "migrate", "m" -> migrate(args);
+                case "copy", "cp" -> copy(args);
                 case "recrypt", "rc" -> recrypt(args);
                 case "key", "kl" -> setKeyLength(args);
                 case "clear", "cls" -> clearConsole();
@@ -228,6 +230,8 @@ public final class Pit {
         logCommand("create, c", "<name>", "Create a new entry in a vault");
         logCommand("add, a", "<file>", "Add an external file to the vault");
         logCommand("generate, g", "<name>", "Generate a credentials entry");
+        logCommand("migrate, m", "<source> [<target>]", "Migrate a normal entry to a credentials entry");
+        logCommand("copy, cp", "<entry> [<email|password>]", "Copy email or password from a credentials entry");
         System.out.println();
     }
 
@@ -408,16 +412,190 @@ public final class Pit {
             return;
         }
 
-        final String fileName = args[0].replace("\\", "/");
-        final String password = KeyUtils.generateRandomPassword();
+        final String entryName = args[0].replace("\\", "/") + ".credentials";
+        final String generatedPassword = KeyUtils.generateRandomPassword();
 
         try {
-            FileUtils.addEntry(vault, fileName, password.getBytes(), masterPassword());
-            logSuccess("Generated password: " + password);
-            copyToClipboard(password);
+            final String master = masterPassword();
+            final Console console = System.console();
+            String email = "";
+            String extra = "";
+            if (console != null) {
+                email = console.readLine("Email (optional, empty to skip): ");
+                if (email == null) {
+                    email = "";
+                }
+
+                logInfo("Enter extra information (optional). Finish with an empty line:");
+
+                final StringBuilder extraBuilder = new StringBuilder();
+                String line;
+                while ((line = console.readLine()) != null && !line.isEmpty()) {
+                    extraBuilder.append(line).append(System.lineSeparator());
+                }
+                extra = extraBuilder.toString().trim();
+            }
+
+            final StringBuilder sb = new StringBuilder();
+            sb.append("email: ").append(email).append(System.lineSeparator());
+            sb.append("password: ").append(generatedPassword).append(System.lineSeparator());
+            sb.append("extra:");
+            if (!extra.isEmpty()) {
+                sb.append(System.lineSeparator()).append(extra);
+            }
+
+            final byte[] content = sb.toString().getBytes();
+            FileUtils.addEntry(vault, entryName, content, master);
+            logSuccess(".credentials entry created successfully: " + entryName);
+
+            copyToClipboard(generatedPassword);
             logInfo("Password copied to clipboard.");
         } catch (final Exception e) {
-            logError("Failed to generate password: " + e.getMessage());
+            logError("Failed to generate credentials: " + e.getMessage());
+        }
+    }
+
+    private static void migrate(final String[] args) {
+        if (args.length < 1 || args.length > 2) {
+            logError("Usage: migrate <source> [<target>]");
+            return;
+        }
+
+        final String sourceEntry = args[0].replace("\\", "/");
+        final String targetEntry = ((args.length == 2 ? args[1] : args[0]).replace("\\", "/")) + ".credentials";
+
+        final String master = masterPassword();
+
+        try {
+            final byte[] content = FileUtils.decryptEntry(vault, sourceEntry, master);
+            final String text = new String(content);
+            final String[] lines = text.split("\r?\n");
+
+            if (lines.length == 0) {
+                logError("Source entry is empty: " + sourceEntry);
+                return;
+            }
+
+            logSection("Source lines for " + sourceEntry + ":");
+            for (int i = 0; i < lines.length; i++) {
+                System.out.printf("%3d: %s%n", i + 1, lines[i]);
+            }
+
+            final Console console = System.console();
+            if (console == null) {
+                logError("Console is required for interactive migration.");
+                return;
+            }
+
+            int emailIndex = -1;
+            String emailInput = console.readLine("Line number for email (empty to skip): ");
+            if (emailInput != null && !emailInput.trim().isEmpty()) {
+                try {
+                    emailIndex = Integer.parseInt(emailInput.trim()) - 1;
+                } catch (NumberFormatException e) {
+                    logError("Invalid email line number.");
+                    return;
+                }
+                if (emailIndex < 0 || emailIndex >= lines.length) {
+                    logError("Email line number out of range.");
+                    return;
+                }
+            }
+
+            int passwordIndex;
+            String passwordInput = console.readLine("Line number for password (required): ");
+            if (passwordInput == null || passwordInput.trim().isEmpty()) {
+                logError("Password line number is required.");
+                return;
+            }
+            try {
+                passwordIndex = Integer.parseInt(passwordInput.trim()) - 1;
+            } catch (NumberFormatException e) {
+                logError("Invalid password line number.");
+                return;
+            }
+            if (passwordIndex < 0 || passwordIndex >= lines.length) {
+                logError("Password line number out of range.");
+                return;
+            }
+
+            if (emailIndex == passwordIndex) {
+                logWarning("Email and password use the same line. It will be treated as password; email will be empty.");
+                emailIndex = -1;
+            }
+
+            String email = "";
+            if (emailIndex != -1) {
+                email = stripKnownPrefix(lines[emailIndex]);
+            }
+
+            final String password = stripKnownPrefix(lines[passwordIndex]);
+            if (password.isEmpty()) {
+                logError("Extracted password is empty after stripping prefixes.");
+                return;
+            }
+
+            final StringBuilder extraBuilder = new StringBuilder();
+            for (int i = 0; i < lines.length; i++) {
+                if (i == emailIndex || i == passwordIndex) {
+                    continue;
+                }
+
+                if (!extraBuilder.isEmpty()) {
+                    extraBuilder.append(System.lineSeparator());
+                }
+                extraBuilder.append(lines[i]);
+            }
+            final String extra = extraBuilder.toString().trim();
+
+            final StringBuilder sb = new StringBuilder();
+            sb.append("email: ").append(email).append(System.lineSeparator());
+            sb.append("password: ").append(password).append(System.lineSeparator());
+            sb.append("extra:");
+            if (!extra.isEmpty()) {
+                sb.append(System.lineSeparator()).append(extra);
+            }
+
+            FileUtils.addEntry(vault, targetEntry, sb.toString().getBytes(), master);
+            logSuccess("Entry migrated to .credentials successfully: " + targetEntry);
+        } catch (final Exception e) {
+            logError("Failed to migrate entry: " + e.getMessage());
+        }
+    }
+
+    private static void copy(final String[] args) {
+        if (args.length < 1 || args.length > 2) {
+            logError("Usage: copy <entry> [<email|password>]");
+            return;
+        }
+
+        final String entryPath = args[0].replace("\\", "/") + ".credentials";
+        final String field = (args.length == 2 ? args[1] : "password").toLowerCase();
+
+        if (!field.equals("email") && !field.equals("password")) {
+            logError("Invalid field: " + field + ". Use 'email' or 'password'.");
+            return;
+        }
+
+        final String password = masterPassword();
+
+        try {
+            final byte[] content = FileUtils.decryptEntry(vault, entryPath, password);
+            final CredentialsData credentialsData = CredentialsData.parseCredentials(content);
+            if (credentialsData == null) {
+                return;
+            }
+
+            final String valueToCopy = field.equals("email") ? credentialsData.email() : credentialsData.password();
+            if (valueToCopy == null || valueToCopy.isEmpty()) {
+                logError("Requested field is empty in .credentials entry: " + field);
+                return;
+            }
+
+            copyToClipboard(valueToCopy);
+            logSuccess(capitalize(field) + " for '" + entryPath + "' copied to clipboard.");
+        } catch (final Exception e) {
+            logError("Failed to copy field from .credentials entry: " + e.getMessage());
         }
     }
 
@@ -521,6 +699,47 @@ public final class Pit {
             String relativePath = base.getAbsolutePath().substring(rootPath.length() + 1).replace("\\", "/");
             map.put(relativePath, Files.readAllBytes(base.toPath()));
         }
+    }
+
+    private static String stripKnownPrefix(final String line) {
+        if (line == null) {
+            return "";
+        }
+
+        final String trimmed = line.trim();
+        final String lower = trimmed.toLowerCase();
+
+        if (lower.startsWith("email:")) {
+            return trimmed.substring("email:".length()).trim();
+        }
+        if (lower.startsWith("e-mail:")) {
+            return trimmed.substring("e-mail:".length()).trim();
+        }
+        if (lower.startsWith("mail:")) {
+            return trimmed.substring("mail:".length()).trim();
+        }
+        if (lower.startsWith("password:")) {
+            return trimmed.substring("password:".length()).trim();
+        }
+        if (lower.startsWith("pass:")) {
+            return trimmed.substring("pass:".length()).trim();
+        }
+        if (lower.startsWith("pwd:")) {
+            return trimmed.substring("pwd:".length()).trim();
+        }
+        return trimmed;
+    }
+
+    private static String capitalize(final String str) {
+        if (str == null || str.isEmpty()) {
+            return str;
+        }
+
+        if (str.length() == 1) {
+            return str.toUpperCase();
+        }
+
+        return Character.toUpperCase(str.charAt(0)) + str.substring(1);
     }
 
 }
