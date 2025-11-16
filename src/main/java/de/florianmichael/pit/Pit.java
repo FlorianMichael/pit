@@ -718,6 +718,9 @@ public final class Pit {
         if (lower.startsWith("mail:")) {
             return trimmed.substring("mail:".length()).trim();
         }
+        if (lower.startsWith("username:")) {
+            return trimmed.substring("username:".length()).trim();
+        }
         if (lower.startsWith("password:")) {
             return trimmed.substring("password:".length()).trim();
         }
