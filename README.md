@@ -1,16 +1,19 @@
 # private information tracker
 
-## Terminology
+PIT acts as a vault obfuscation tool allowing you to encrypt folders and files into compressed data object files which
+can only be accessed again using the master password.
 
-Originally meant to be a password management tool, PIT acts as a vault obfuscation tool allowing you to encrypt folders and files
-into compressed data object files which can only be accessed again using the master password.
+I originally wrote this as a more secure way to store my passwords locally, so PIT comes with some more specialized
+commands on credentials management.
+
+Please note that this tool is very specific to my own use-cases and may lack some general UX for other people.
 
 ![CLI](/.github/media/cli.png)
 
-Set up your vault using 
+Set up your vault using
 
 ``
-java -jar pit.jar init passwords
+java -jar pit.jar init example // vault name
 ``
 
 ![Session](/.github/media/session.png)
@@ -31,14 +34,14 @@ exit
 
 ----
 
-View again by:
+Get the password again by:
 
 ``
-java -jar pit.jar session passwords
+java -jar pit.jar session example
 ``
 
 ``
-view google
+copy google
 ``
 
 ``
@@ -46,6 +49,7 @@ exit
 ``
 
 ## Contact
+
 If you encounter any issues, please report them on the
 [issue tracker](https://github.com/FlorianMichael/pit/issues).  
 If you just want to talk or need help with pit feel free to join my
