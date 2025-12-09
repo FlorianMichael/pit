@@ -48,6 +48,12 @@ copy google
 exit
 ``
 
+### Downloads
+
+You can download the latest jar file
+from [my build server](https://build.florianmichael.de/job/pit), [GitHub Actions](https://github.com/FlorianMichael/pit/actions)
+or use the [releases tab](https://github.com/FlorianMichael/pit/releases).
+
 ## Contact
 
 If you encounter any issues, please report them on the
